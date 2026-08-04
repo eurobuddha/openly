@@ -142,7 +142,7 @@ public class OpenlyTxn {
     public void fill(Bet bet, Done done) {
         final BigDecimal need = bet.wantstake;                 // counter's total lock
         final BigDecimal pot = Num.add(bet.amount, bet.wantstake);
-        node.cmd("coins sendable:true tokenid:0x00", new NodeApi.Cb() {
+        node.cmd("coins sendable:true tokenid:0x00 depth:400", new NodeApi.Cb() {
             public void onResult(JSONObject r) {
                 JSONArray arr = r.optJSONArray("response");
                 JSONObject fund = null;
@@ -229,7 +229,7 @@ public class OpenlyTxn {
     /** Query sendable coinids and prune inflight to them (a spent funding coin is released). */
     public void refreshInflight() {
         if (inflightCoins.isEmpty()) return;   // nothing reserved → skip the (possibly large) query
-        node.cmd("coins sendable:true tokenid:0x00", new NodeApi.Cb() {
+        node.cmd("coins sendable:true tokenid:0x00 depth:400", new NodeApi.Cb() {
             public void onResult(JSONObject r) {
                 java.util.Set<String> present = ConcurrentHashMap.newKeySet();
                 JSONArray arr = r.optJSONArray("response");

@@ -168,6 +168,11 @@ public class MainActivity extends AppCompatActivity {
         return fresh;
     }
 
+    private boolean amArbiterOfLiveBet() {
+        for (Bet b : scanner.matched) if (b.isMyArb) return true;
+        return false;
+    }
+
     public Bet betByNonce(String nonce) {
         if (nonce == null || nonce.isEmpty()) return null;
         for (Bet b : scanner.matched) if (nonce.equalsIgnoreCase(b.nonce)) return b;
@@ -307,10 +312,16 @@ public class MainActivity extends AppCompatActivity {
                 } catch (Exception ignored) {}
                 if (scanner != null) {
                     scanner.scan(currentBlock);
-                    if (identity != null && identity.ready()) scanner.scanDisputes(identity.hexaddr);
+                    // Only an arbiter of a live bet needs the dispute scan — and its query is bounded.
+                    // (Running it for everyone every block issued an unbounded coins query that could
+                    // exceed the node's 256 KB IPC limit → TransactionTooLargeException → app drop.)
+                    if (identity != null && identity.ready() && amArbiterOfLiveBet()) {
+                        scanner.scanDisputes(identity.hexaddr);
+                    }
                 }
                 if (comms != null && comms.ready()) comms.scan(currentBlock);
-                if (txn != null) txn.refreshInflight();
+                // NOTE: no periodic `coins sendable:true` here — on a large wallet that reply blows the
+                // 256 KB IPC limit and destabilises the app. Spent funding coins self-expire from reuse.
                 // Only the visible page repaints on a block; the others refresh when selected
                 // (onShown) — rebuilding all four view trees every block was blocking the UI thread.
                 pagerAdapter.viewAt(pager.getCurrentItem()).onNewBlock();

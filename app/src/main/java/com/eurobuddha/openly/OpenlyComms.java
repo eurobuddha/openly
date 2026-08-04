@@ -123,8 +123,9 @@ public class OpenlyComms {
         lastDeep = now;
         String tag = OpenlyContract.MAIL_ADDR.length() > 10
                 ? OpenlyContract.MAIL_ADDR.substring(2, 10) : OpenlyContract.MAIL_ADDR;
-        // Look back a bounded window (not the whole chain) so decryption stays cheap.
-        int back = block > 60 ? block - 60 : 0;
+        // Look back a small bounded window (shared mail address can be large — keep the reply well
+        // under the node's 256 KB IPC limit and decryption cheap).
+        int back = block > 25 ? block - 25 : 0;
         db.setMeta("scanned_tip_" + tag, String.valueOf(back));
         Log.d(TAG, "deepRescan: tip→" + back + " at block " + block);
         scan(block);

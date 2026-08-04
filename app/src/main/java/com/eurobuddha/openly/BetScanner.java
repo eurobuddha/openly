@@ -113,7 +113,9 @@ public class BetScanner {
      */
     public void scanDisputes(String myPayoutAddr) {
         if (myPayoutAddr == null || myPayoutAddr.isEmpty()) return;
-        node.cmd("coins address:" + myPayoutAddr, new NodeApi.Cb() {
+        // depth-bounded: dispute markers are recent, and an unbounded query at a reused address can
+        // exceed the node's 256 KB IPC limit.
+        node.cmd("coins address:" + myPayoutAddr + " depth:400", new NodeApi.Cb() {
             public void onResult(JSONObject r) {
                 Set<String> found = new HashSet<>();
                 JSONArray arr = r.optJSONArray("response");
