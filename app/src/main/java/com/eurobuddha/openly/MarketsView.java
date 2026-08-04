@@ -92,7 +92,32 @@ public class MarketsView extends BaseView {
         foot.addView(Ui.text(act, count + " open · TRUE " + m.yes.size() + " / FALSE " + m.no.size(),
                 Design.DIM(), 11, false));
         card.addView(foot);
+
+        // Take buttons: taking a TRUE offer means I bet FALSE, and vice versa.
+        Bet bestTrue = pickBest(m.yes), bestFalse = pickBest(m.no);
+        LinearLayout actions = Ui.row(act);
+        Ui.topMargin(actions, Ui.dp(act, 12));
+        if (bestTrue != null && !bestTrue.isMine) {
+            TextView t = Ui.button(act, "Take FALSE", Design.FALSE_SOFT(), Design.FALSE_C(), false);
+            final Bet b = bestTrue;
+            t.setOnClickListener(v -> new CounterSheet(act, b).show());
+            LinearLayout.LayoutParams lp = Ui.weight(1); lp.rightMargin = Ui.dp(act, 6);
+            actions.addView(t, lp);
+        }
+        if (bestFalse != null && !bestFalse.isMine) {
+            TextView t = Ui.button(act, "Take TRUE", Design.TRUE_SOFT(), Design.TRUE_C(), false);
+            final Bet b = bestFalse;
+            t.setOnClickListener(v -> new CounterSheet(act, b).show());
+            actions.addView(t, Ui.weight(1));
+        }
+        if (actions.getChildCount() > 0) card.addView(actions);
         return card;
+    }
+
+    private Bet pickBest(List<Bet> side) {
+        Bet best = null;
+        for (Bet b : side) if (best == null || b.ownerBet().compareTo(best.ownerBet()) > 0) best = b;
+        return best;
     }
 
     private View liveRow(Bet b) {

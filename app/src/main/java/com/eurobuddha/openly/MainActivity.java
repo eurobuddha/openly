@@ -121,6 +121,11 @@ public class MainActivity extends AppCompatActivity {
     /** Refresh the currently visible page. */
     public void refreshCurrent() { onScanned(); }
 
+    /** Light detent haptic for the stake slider. */
+    public void performHapticFeedback() {
+        if (pager != null) pager.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
+    }
+
     private void onScanned() {
         BaseView v = pagerAdapter.viewAt(pager.getCurrentItem());
         v.refresh();
