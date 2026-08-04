@@ -161,6 +161,30 @@ public class MyBetsView extends BaseView {
         drow.addView(f, l2);
         drow.addView(vd, Ui.weight(0.6f));
         card.addView(drow);
+
+        // Timeout escape hatch: flag "reclaim if arbiter silent" (stops auto-refresh so the coin ages),
+        // and once age > timeout, offer the manual reclaim.
+        boolean flagged = act.auto.isFlagged(b.nonce);
+        int remaining = b.timeout - b.ageBlocks;
+        if (b.ageBlocks > b.timeout) {
+            TextView reclaim = Ui.button(act, "Reclaim both stakes", Design.WARN_SOFT(), Design.WARN(), false);
+            Ui.topMargin(reclaim, Ui.dp(act, 10));
+            reclaim.setOnClickListener(v -> {
+                reclaim.setEnabled(false);
+                act.txn.timeout(b, new OpenlyTxn.Done() {
+                    public void ok() { act.toast("Timeout refund posted"); act.refreshCurrent(); }
+                    public void fail(String m) { act.toast("Timeout failed: " + m); reclaim.setEnabled(true); }
+                });
+            });
+            card.addView(reclaim);
+        } else {
+            TextView flag = Ui.text(act, (flagged ? "✓ Will reclaim if arbiter silent (~"
+                    : "Tap: reclaim if arbiter silent (~") + Math.max(0, remaining) + " blocks)",
+                    flagged ? Design.WARN() : Design.DIM(), 11, false);
+            Ui.topMargin(flag, Ui.dp(act, 10));
+            flag.setOnClickListener(v -> { act.auto.flagTimeout(b.nonce, !flagged); act.refreshCurrent(); });
+            card.addView(flag);
+        }
         return card;
     }
 

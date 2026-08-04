@@ -62,6 +62,7 @@ public class MainActivity extends AppCompatActivity {
     public OpenlyDb db;
     public OpenlyComms comms;
     public SettleEngine settle;
+    public AutoProcessor auto;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -114,12 +115,14 @@ public class MainActivity extends AppCompatActivity {
         db = new OpenlyDb(this);
         comms = new OpenlyComms(this, node, db, this::onCommsMessage);
         settle = new SettleEngine(this);
+        auto = new AutoProcessor(this, scanner, txn);
         registerNotifyReceiver();
         ensureContract();
         identity.ensure(() -> {
             comms.setup(null);   // derive comms identity → pins identity.commsId
             scanner.loadKeys(this::requestReload);
         });
+        try { OpenlyService.start(this); } catch (Exception ignored) {}
     }
 
     /**
@@ -163,6 +166,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void onScanned() {
+        if (auto != null) auto.process(currentBlock);
         BaseView v = pagerAdapter.viewAt(pager.getCurrentItem());
         v.refresh();
     }

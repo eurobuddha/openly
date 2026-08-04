@@ -196,6 +196,81 @@ public class OpenlyTxn {
     /** Prune inflight reservations to coins still present (called after a confirmation scan). */
     public void pruneInflight(Set<String> present) { inflightCoins.retainAll(present); }
 
+    // ---------------------------------------------------------------- TIMEOUT refund (MAST leaf)
+    /**
+     * Anyone can trigger the proportional refund once the coin is older than the timeout: owner gets
+     * their lock back (port 15), counter gets the rest. Attaches the timeout MAST proof, sets port
+     * 20 = 3. The leaf carries no SIGNEDBY, so no contract signature is needed.
+     */
+    public void timeout(Bet bet, Done done) {
+        final String txid = tag("timeout");
+        BigDecimal os = bet.ownerstake;                 // port 15, always set on a matched coin
+        BigDecimal counterPart = Num.sub(bet.amount, os);
+        String scripts = mastArg(OpenlyContract.LEAF_TIMEOUT, OpenlyContract.PROOF_TIMEOUT);
+        List<String> cmds = new ArrayList<>();
+        cmds.add("txncreate id:" + txid);
+        cmds.add("txninput id:" + txid + " coinid:" + bet.coinid);
+        cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(os)
+                + " address:" + bet.owneraddr + " storestate:false");
+        cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(counterPart)
+                + " address:" + bet.counteraddr + " storestate:false");
+        cmds.add("txnstate id:" + txid + " port:20 value:3");
+        cmds.add("txnscript id:" + txid + " scripts:" + scripts);
+        cmds.add("txnbasics id:" + txid);
+        cmds.add("txnpost id:" + txid);
+        SignGate.submit(gate -> CmdChain.run(node, cmds, "txndelete id:" + txid, new CmdChain.Done() {
+            public void ok(JSONObject last) {
+                gate.free();
+                node.cmd("txndelete id:" + txid, NodeApi.Cb.NOOP);
+                done.ok();
+            }
+            public void fail(String msg) { gate.free(); done.fail(msg); }
+        }));
+    }
+
+    // ---------------------------------------------------------------- REFRESH (keep-alive)
+    /**
+     * Re-lock a coin to reset @COINAGE inside the visibility horizon. Phase 0: owner-signed relock,
+     * all state preserved. Phase 1: MAST refresh leaf, state 0–16 pinned + refreshcount+1, signed by
+     * owner or counter. Every phase-1 spend sets port 20 = 3.
+     */
+    public void refresh(Bet bet, String myBetPk, Done done) {
+        final String txid = tag("refresh");
+        List<String> cmds = new ArrayList<>();
+        cmds.add("txncreate id:" + txid);
+        cmds.add("txninput id:" + txid + " coinid:" + bet.coinid);
+        cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(bet.amount)
+                + " address:" + OpenlyContract.ADDR + " storestate:true");
+        // preserve ports 0–16; phase 1 bumps refreshcount and needs the MAST leaf + port 20
+        if (bet.phase == 1) {
+            cmds.add(st(txid, 17, String.valueOf(bet.refreshcount + 1)));
+            cmds.add(st(txid, 20, "3"));
+            cmds.add("txnscript id:" + txid + " scripts:"
+                    + mastArg(OpenlyContract.LEAF_REFRESH, OpenlyContract.PROOF_REFRESH));
+            cmds.add("txnsign id:" + txid + " publickey:" + myBetPk);
+        } else {
+            cmds.add("txnsign id:" + txid + " publickey:" + bet.ownerpk);
+        }
+        cmds.add("txnbasics id:" + txid);
+        cmds.add("txnpost id:" + txid);
+        SignGate.submit(gate -> CmdChain.run(node, cmds, "txndelete id:" + txid, new CmdChain.Done() {
+            public void ok(JSONObject last) {
+                gate.free();
+                node.cmd("txndelete id:" + txid, NodeApi.Cb.NOOP);
+                done.ok();
+            }
+            public void fail(String msg) { gate.free(); done.fail(msg); }
+        }));
+    }
+
+    private static String mastArg(String script, String proof) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put(script, proof);
+            return o.toString();
+        } catch (Exception e) { return "{}"; }
+    }
+
     // ---------------------------------------------------------------- ARBITER resolve (phase 1)
     /**
      * Arbiter declares the outcome: input the contract coin, pay the winner pot−fee and the arbiter
