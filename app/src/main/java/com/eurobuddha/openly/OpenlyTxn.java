@@ -196,6 +196,39 @@ public class OpenlyTxn {
     /** Prune inflight reservations to coins still present (called after a confirmation scan). */
     public void pruneInflight(Set<String> present) { inflightCoins.retainAll(present); }
 
+    // ---------------------------------------------------------------- ARBITER resolve (phase 1)
+    /**
+     * Arbiter declares the outcome: input the contract coin, pay the winner pot−fee and the arbiter
+     * fee = pot/10, state port 20 = outcome, sign with the arbiter key, gated post.
+     */
+    public void resolve(Bet bet, int outcome, Done done) {
+        BigDecimal pot = bet.amount;
+        BigDecimal fee = Num.fee(pot);
+        BigDecimal winnings = Num.sub(pot, fee);
+        boolean ownerWins = outcome == bet.side;
+        String winnerAddr = ownerWins ? bet.owneraddr : bet.counteraddr;
+        final String txid = tag("resolve");
+        List<String> cmds = new ArrayList<>();
+        cmds.add("txncreate id:" + txid);
+        cmds.add("txninput id:" + txid + " coinid:" + bet.coinid);
+        cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(winnings)
+                + " address:" + winnerAddr + " storestate:false");
+        cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(fee)
+                + " address:" + bet.arbaddr + " storestate:false");
+        cmds.add("txnstate id:" + txid + " port:20 value:" + outcome);
+        cmds.add("txnsign id:" + txid + " publickey:" + bet.arbpk);
+        cmds.add("txnbasics id:" + txid);
+        cmds.add("txnpost id:" + txid);
+        SignGate.submit(gate -> CmdChain.run(node, cmds, "txndelete id:" + txid, new CmdChain.Done() {
+            public void ok(JSONObject last) {
+                gate.free();
+                node.cmd("txndelete id:" + txid, NodeApi.Cb.NOOP);
+                done.ok();
+            }
+            public void fail(String msg) { gate.free(); done.fail(msg); }
+        }));
+    }
+
     // ---------------------------------------------------------------- SETTLE build (proposer)
     public interface Exported { void ok(String hex); void fail(String msg); }
 

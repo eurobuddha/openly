@@ -98,6 +98,37 @@ public class SettleEngine {
                 m.winnerAmt, m.loserAmt, "RECEIVED", now);
     }
 
+    /** I disagree: reject to the counterparty and raise a DISPUTE to the arbiter's commsid. */
+    public void dispute(Bet bet, Cb cb) {
+        long now = System.currentTimeMillis();
+        db.setProposalState(bet.nonce, "IN", "REJECTED", now);
+        // notify counterparty (best-effort)
+        OpenlyMessage rej = base(bet, OpenlyMessage.SETTLE_REJECT, theirCommsId(bet), now);
+        comms.send(rej.to, rej, noop());
+        // raise dispute to arbiter
+        if (bet.arbcommsid != null && !bet.arbcommsid.isEmpty()) {
+            OpenlyMessage d = base(bet, OpenlyMessage.DISPUTE, bet.arbcommsid, now);
+            comms.send(d.to, d, new CommsTransport.SendCb() {
+                public void onSent(String t) { cb.ok(); }
+                public void onFailed(String e) { cb.fail("dispute send: " + e); }
+            });
+        } else cb.ok();
+    }
+
+    private OpenlyMessage base(Bet bet, String type, String to, long now) {
+        OpenlyMessage m = new OpenlyMessage();
+        m.type = type; m.ref = bet.nonce; m.to = to; m.date = now; m.coinid = bet.coinid;
+        m.randomid = "0x" + Long.toHexString(now) + Integer.toHexString(type.hashCode() & 0xffff);
+        return m;
+    }
+
+    private CommsTransport.SendCb noop() {
+        return new CommsTransport.SendCb() {
+            public void onSent(String t) {}
+            public void onFailed(String e) {}
+        };
+    }
+
     /** I accept the inbound proposal: validate via CoSigner against my chain view, then co-sign + post. */
     public void accept(Bet bet, Cb cb) {
         OpenlyDb.Proposal p = db.inboundProposal(bet.nonce);

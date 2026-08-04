@@ -129,7 +129,13 @@ public class MyBetsView extends BaseView {
                 });
             });
             TextView disagree = Ui.button(act, "Disagree", Design.SURFACE2(), Design.DIM(), false);
-            disagree.setOnClickListener(v -> act.toast("Dispute → arbiter (Phase 7)"));
+            disagree.setOnClickListener(v -> {
+                disagree.setEnabled(false);
+                act.settle.dispute(b, new SettleEngine.Cb() {
+                    public void ok() { act.toast("Dispute sent to arbiter"); act.refreshCurrent(); }
+                    public void fail(String m) { act.toast("Dispute failed: " + m); disagree.setEnabled(true); }
+                });
+            });
             LinearLayout.LayoutParams lp = Ui.weight(1); lp.rightMargin = Ui.dp(act, 6);
             row.addView(agree, lp);
             row.addView(disagree, Ui.weight(1));
