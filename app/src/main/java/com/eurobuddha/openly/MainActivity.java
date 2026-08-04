@@ -57,6 +57,8 @@ public class MainActivity extends AppCompatActivity {
     public String contractAddr = OpenlyContract.ADDR;
     public String balance = "—";
     public BetScanner scanner;
+    public Identity identity;
+    public OpenlyTxn txn;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -104,10 +106,20 @@ public class MainActivity extends AppCompatActivity {
 
         node = new NodeApi(this, enabled -> ui.post(() -> setPaired(enabled)));
         scanner = new BetScanner(node, () -> ui.post(this::onScanned));
+        identity = new Identity(this, node);
+        txn = new OpenlyTxn(node, identity);
         registerNotifyReceiver();
         ensureContract();
-        scanner.loadKeys(this::requestReload);
+        identity.ensure(() -> scanner.loadKeys(this::requestReload));
     }
+
+    /** Toast-ish status line via the block header (kept minimal for Phase 3). */
+    public void toast(String msg) {
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show();
+    }
+
+    /** Refresh the currently visible page. */
+    public void refreshCurrent() { onScanned(); }
 
     private void onScanned() {
         BaseView v = pagerAdapter.viewAt(pager.getCurrentItem());

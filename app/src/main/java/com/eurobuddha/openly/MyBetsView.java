@@ -70,6 +70,17 @@ public class MyBetsView extends BaseView {
                 + "  ·  want " + Num.plain(b.counterBet()), Design.sideColor(b.side), 13, false);
         Ui.topMargin(you, Ui.dp(act, 6));
         card.addView(you);
+
+        TextView cancel = Ui.button(act, "Cancel", Design.SURFACE2(), Design.DIM(), false);
+        Ui.topMargin(cancel, Ui.dp(act, 12));
+        cancel.setOnClickListener(v -> {
+            cancel.setEnabled(false);
+            act.txn.cancel(b, new OpenlyTxn.Done() {
+                public void ok() { act.toast("Cancelled — funds returning"); act.refreshCurrent(); }
+                public void fail(String m) { act.toast("Cancel failed: " + m); cancel.setEnabled(true); }
+            });
+        });
+        card.addView(cancel);
         return card;
     }
 
