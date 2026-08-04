@@ -59,6 +59,8 @@ public class MainActivity extends AppCompatActivity {
     public BetScanner scanner;
     public Identity identity;
     public OpenlyTxn txn;
+    public OpenlyDb db;
+    public OpenlyComms comms;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -108,9 +110,38 @@ public class MainActivity extends AppCompatActivity {
         scanner = new BetScanner(node, () -> ui.post(this::onScanned));
         identity = new Identity(this, node);
         txn = new OpenlyTxn(node, identity);
+        db = new OpenlyDb(this);
+        comms = new OpenlyComms(this, node, db, this::onCommsMessage);
         registerNotifyReceiver();
         ensureContract();
-        identity.ensure(() -> scanner.loadKeys(this::requestReload));
+        identity.ensure(() -> {
+            comms.setup(null);   // derive comms identity → pins identity.commsId
+            scanner.loadKeys(this::requestReload);
+        });
+    }
+
+    /**
+     * Authenticated inbound message (seal + signature valid). Phase 5: verify the sender is a party
+     * to the referenced bet (against on-chain pinned commsid) and store it. Phase 6 dispatches
+     * SETTLE_* to the settle engine.
+     */
+    private boolean onCommsMessage(OpenlyMessage m, JSONObject coin) {
+        Bet bet = betByNonce(m.ref);
+        if (bet == null) return false;                        // unknown bet — drop
+        boolean senderIsParty = m.from.equals(bet.ownercommsid)
+                || m.from.equals(bet.countercommsid)
+                || m.from.equals(bet.arbcommsid);
+        if (!senderIsParty) return false;                     // spoofed sender — drop
+        boolean fresh = db.insertMessageIfNew(m, true);
+        if (fresh) ui.post(this::refreshCurrent);
+        return fresh;
+    }
+
+    public Bet betByNonce(String nonce) {
+        if (nonce == null || nonce.isEmpty()) return null;
+        for (Bet b : scanner.matched) if (nonce.equalsIgnoreCase(b.nonce)) return b;
+        for (Bet b : scanner.open) if (nonce.equalsIgnoreCase(b.nonce)) return b;
+        return null;
     }
 
     /** Toast-ish status line via the block header (kept minimal for Phase 3). */
@@ -168,6 +199,7 @@ public class MainActivity extends AppCompatActivity {
                     blockNo.setText("#" + currentBlock);
                 } catch (Exception ignored) {}
                 if (scanner != null) scanner.scan(currentBlock);
+                if (comms != null && comms.ready()) comms.scan(currentBlock);
                 for (int i = 0; i < pagerAdapter.getCount(); i++) pagerAdapter.viewAt(i).onNewBlock();
             }
             public void onError(String e) {}
