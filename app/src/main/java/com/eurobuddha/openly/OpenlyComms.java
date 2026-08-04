@@ -116,11 +116,17 @@ public class OpenlyComms {
      * miss them once its tip advanced). Idempotent — dedup on messages.randomid. Call on resume / when
      * a settlement is pending.
      */
+    private long lastDeep = 0;
     public void deepRescan(int block) {
+        long now = System.currentTimeMillis();
+        if (now - lastDeep < 15000) return;    // throttle — avoid repeated heavy decrypt on resume/tab
+        lastDeep = now;
         String tag = OpenlyContract.MAIL_ADDR.length() > 10
                 ? OpenlyContract.MAIL_ADDR.substring(2, 10) : OpenlyContract.MAIL_ADDR;
-        db.setMeta("scanned_tip_" + tag, "0");   // gap → MAX_DEPTH on the next scan
-        Log.d(TAG, "deepRescan: reset tip, scanning deep at block " + block);
+        // Look back a bounded window (not the whole chain) so decryption stays cheap.
+        int back = block > 60 ? block - 60 : 0;
+        db.setMeta("scanned_tip_" + tag, String.valueOf(back));
+        Log.d(TAG, "deepRescan: tip→" + back + " at block " + block);
         scan(block);
     }
 
@@ -129,7 +135,8 @@ public class OpenlyComms {
         if (opened == null || !opened.valid) return false;
         OpenlyMessage m = OpenlyMessage.fromWire(opened.plaintext, opened.fromPublicId);
         if (m == null || m.randomid.isEmpty() || m.ref.isEmpty()) return false;
-        boolean forMe = m.to.equals(myId());
+        // Case-insensitive: on-chain comms ids are UPPERCASE hex, runtime Hex.to() is lowercase.
+        boolean forMe = m.to.equalsIgnoreCase(myId());
         Log.d(TAG, "route: type=" + m.type + " ref=" + (m.ref.length() > 12 ? m.ref.substring(0, 12) : m.ref)
                 + " forMe=" + forMe + " from=" + (m.from == null ? "?" : (m.from.length() > 12 ? m.from.substring(0, 12) : m.from)));
         if (!forMe) return false;                          // not addressed to me

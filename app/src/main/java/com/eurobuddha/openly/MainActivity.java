@@ -154,9 +154,10 @@ public class MainActivity extends AppCompatActivity {
             android.util.Log.d("OpenlyComms", "sink: no bet for nonce " + m.ref);
             return false;                                     // unknown bet — drop
         }
-        boolean senderIsParty = m.from.equals(bet.ownercommsid)
-                || m.from.equals(bet.countercommsid)
-                || m.from.equals(bet.arbcommsid);
+        // Case-insensitive: on-chain comms ids are UPPERCASE, runtime/decoded ones are lowercase.
+        boolean senderIsParty = m.from.equalsIgnoreCase(bet.ownercommsid)
+                || m.from.equalsIgnoreCase(bet.countercommsid)
+                || m.from.equalsIgnoreCase(bet.arbcommsid);
         android.util.Log.d("OpenlyComms", "sink: type=" + m.type + " party=" + senderIsParty);
         if (!senderIsParty) return false;                     // spoofed sender — drop
         boolean fresh = db.insertMessageIfNew(m, true);
