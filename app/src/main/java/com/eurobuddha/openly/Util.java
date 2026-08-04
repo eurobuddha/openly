@@ -74,4 +74,30 @@ public final class Util {
         if (s.endsWith(".")) s = s.substring(0, s.length() - 1);
         return s.isEmpty() ? "0" : s;
     }
+
+    /** ASCII string → 0x-prefixed uppercase hex (for state ports: proposition, comms ids). */
+    public static String strToHex(String s) {
+        if (s == null) return "0x";
+        StringBuilder b = new StringBuilder("0x");
+        for (int i = 0; i < s.length(); i++) {
+            b.append(String.format("%02X", s.charAt(i) & 0xFF));
+        }
+        return b.toString();
+    }
+
+    /** 0x-hex (with or without prefix) → ASCII string. Returns "" on malformed input. */
+    public static String hexToStr(String hex) {
+        if (hex == null || hex.isEmpty()) return "";
+        String h = hex.startsWith("0x") || hex.startsWith("0X") ? hex.substring(2) : hex;
+        if ((h.length() & 1) != 0) return "";
+        try {
+            StringBuilder b = new StringBuilder();
+            for (int i = 0; i < h.length(); i += 2) {
+                b.append((char) Integer.parseInt(h.substring(i, i + 2), 16));
+            }
+            return b.toString();
+        } catch (NumberFormatException e) {
+            return "";
+        }
+    }
 }

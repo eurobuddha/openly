@@ -56,10 +56,12 @@ public class MainActivity extends AppCompatActivity {
     // ---- Openly state (read by views) ----
     public String contractAddr = OpenlyContract.ADDR;
     public String balance = "—";
+    public BetScanner scanner;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        Design.load(this);
         setContentView(R.layout.activity_main);
 
         View mainRoot = findViewById(R.id.main);
@@ -101,9 +103,15 @@ public class MainActivity extends AppCompatActivity {
         });
 
         node = new NodeApi(this, enabled -> ui.post(() -> setPaired(enabled)));
+        scanner = new BetScanner(node, () -> ui.post(this::onScanned));
         registerNotifyReceiver();
         ensureContract();
-        requestReload();
+        scanner.loadKeys(this::requestReload);
+    }
+
+    private void onScanned() {
+        BaseView v = pagerAdapter.viewAt(pager.getCurrentItem());
+        v.refresh();
     }
 
     public NodeApi node() { return node; }
@@ -142,6 +150,7 @@ public class MainActivity extends AppCompatActivity {
                     currentBlock = r.getJSONObject("response").getInt("block");
                     blockNo.setText("#" + currentBlock);
                 } catch (Exception ignored) {}
+                if (scanner != null) scanner.scan(currentBlock);
                 for (int i = 0; i < pagerAdapter.getCount(); i++) pagerAdapter.viewAt(i).onNewBlock();
             }
             public void onError(String e) {}

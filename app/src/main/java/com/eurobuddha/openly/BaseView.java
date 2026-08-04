@@ -14,6 +14,12 @@ public abstract class BaseView {
         root = LayoutInflater.from(a).inflate(layoutRes, null);
     }
 
+    /** Programmatic-root pages (list screens build their own view tree). */
+    public BaseView(MainActivity a, View programmaticRoot) {
+        act = a;
+        root = programmaticRoot;
+    }
+
     public View getRoot() {
         return root;
     }
