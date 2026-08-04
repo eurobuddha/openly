@@ -131,6 +131,7 @@ public class SettleEngine {
 
     /** I accept the inbound proposal: validate via CoSigner against my chain view, then co-sign + post. */
     public void accept(Bet bet, Cb cb) {
+        if (!bet.isMine && !bet.isMyCounter) { cb.fail("not a party"); return; }
         OpenlyDb.Proposal p = db.inboundProposal(bet.nonce);
         if (p == null || p.hex == null || p.hex.isEmpty()) { cb.fail("no proposal"); return; }
         cosigner.validateAndPost(bet, p.hex, p.txnsha3, p.outcome, myBetPk(bet), new CoSigner.Done() {

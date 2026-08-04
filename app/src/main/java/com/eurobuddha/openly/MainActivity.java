@@ -123,6 +123,14 @@ public class MainActivity extends AppCompatActivity {
             scanner.loadKeys(this::requestReload);
         });
         try { OpenlyService.start(this); } catch (Exception ignored) {}
+
+        // First-run onboarding overlay on top of the content frame.
+        android.widget.FrameLayout onb = new android.widget.FrameLayout(this);
+        ((android.view.ViewGroup) findViewById(android.R.id.content)).addView(onb,
+                new android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        Onboarding.showIfNeeded(this, onb);
     }
 
     /**
