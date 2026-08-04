@@ -1,0 +1,53 @@
+plugins {
+    alias(libs.plugins.android.application)
+}
+
+android {
+    namespace 'com.eurobuddha.openly'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "com.eurobuddha.openly"
+        minSdk 28
+        targetSdk 35
+        versionCode 100
+        versionName "1.0.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Sign release with the debug keystore (IPC is authorised by the MINIMA_ID token,
+            // not by signature — matches the whole companion-app family).
+            signingConfig signingConfigs.debug
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+}
+
+dependencies {
+    implementation libs.appcompat
+    implementation libs.material
+    implementation libs.activity
+    implementation libs.constraintlayout
+
+    // Tabbed UI
+    implementation 'androidx.viewpager:viewpager:1.0.0'
+
+    // Background refresh: WorkManager re-launches the foreground service if the OS kills it.
+    implementation 'androidx.work:work-runtime:2.9.1'
+
+    // Minima Core IPC client SDK (the only way this app reaches the node)
+    implementation files('libs/minimaapi.aar')
+
+    // Client-side end-to-end crypto for comms: X25519 sealed box + Ed25519 (libsodium).
+    // The node has no Maxima over IPC, so all encryption/signing happens in-app; the node
+    // only carries the sealed blob in coin state. Keys derive from the Minima seed.
+    implementation 'com.goterl:lazysodium-android:5.1.0@aar'
+    implementation 'net.java.dev.jna:jna:5.13.0@aar'
+}
