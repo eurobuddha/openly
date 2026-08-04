@@ -35,8 +35,11 @@ public final class CommsScanner {
 
     public interface Listener { void onDone(boolean ok, int newCount); }
 
-    private static final int START_DEPTH = 4;          // every scan's FIRST query is this small + safe
-    private static final int MAX_DEPTH = 64;           // grow no deeper than this in one pass
+    private static final int START_DEPTH = 3;          // every scan's FIRST query is this small + safe
+    // Capped low for Openly: the OPENLY mail address is SHARED by all users, so even a few blocks can
+    // hold many coins. A deep query (was 64) returned 274 KB — over the node's 256 KB IPC limit →
+    // TransactionTooLargeException, which closes the app's input channel. Keep replies well under it.
+    private static final int MAX_DEPTH = 8;            // grow no deeper than this in one pass
     private static final long MIN_INTERVAL_MS = 4000;  // throttle: don't hammer the node on bursts
 
     private final NodeApi node;

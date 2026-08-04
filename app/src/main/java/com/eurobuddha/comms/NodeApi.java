@@ -130,6 +130,7 @@ public class NodeApi {
 
     public void cmd(String command, Cb cb) {
         if (mReleased) return;
+        android.util.Log.d("OpenlyCmd", command.length() > 80 ? command.substring(0, 80) : command);
         final boolean isWrite = timeoutFor(command) == WRITE_TIMEOUT_MS;
         if (isWrite) mPendingWrites++;
         final boolean[] done = {false};
