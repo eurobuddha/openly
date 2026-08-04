@@ -257,7 +257,9 @@ public class MainActivity extends AppCompatActivity {
                 }
                 if (comms != null && comms.ready()) comms.scan(currentBlock);
                 if (txn != null) txn.refreshInflight();
-                for (int i = 0; i < pagerAdapter.getCount(); i++) pagerAdapter.viewAt(i).onNewBlock();
+                // Only the visible page repaints on a block; the others refresh when selected
+                // (onShown) — rebuilding all four view trees every block was blocking the UI thread.
+                pagerAdapter.viewAt(pager.getCurrentItem()).onNewBlock();
             }
             public void onError(String e) {}
         });

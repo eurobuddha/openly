@@ -1,5 +1,8 @@
 package com.eurobuddha.openly;
 
+import android.os.Handler;
+import android.os.Looper;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -7,6 +10,8 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import com.eurobuddha.comms.NodeApi;
 
@@ -31,6 +36,12 @@ public class BetScanner {
     /** Nonces flagged disputed via an on-chain marker at my payout address (I am the arbiter). */
     public final Set<String> disputedNonces = new HashSet<>();
     private int tipBlock = 0;
+
+    // Parse coins off the UI thread — a mainnet response can be large, and each coin costs a 64-key
+    // ownership check. Only the tiny list-swap + listener run on main. A guard drops overlapping scans.
+    private final ExecutorService parseIo = Executors.newSingleThreadExecutor();
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private volatile boolean scanning = false;
 
     public BetScanner(NodeApi node, Listener listener) {
         this.node = node;
@@ -61,27 +72,37 @@ public class BetScanner {
     }
 
     public void scan(int tip) {
+        if (scanning) return;         // drop overlapping scans — a slow parse can't pile up
+        scanning = true;
         this.tipBlock = tip;
         node.cmd("coins address:" + OpenlyContract.ADDR, new NodeApi.Cb() {
             public void onResult(JSONObject r) {
-                List<Bet> o = new ArrayList<>();
-                List<Bet> m = new ArrayList<>();
-                JSONArray arr = r.optJSONArray("response");
-                if (arr != null) {
-                    for (int i = 0; i < arr.length(); i++) {
-                        JSONObject cj = arr.optJSONObject(i);
-                        if (cj == null || cj.optBoolean("spent", false)) continue;
-                        BetCoin bc = BetCoin.from(cj);
-                        Bet b = Bet.from(bc, myKeys, tipBlock);
-                        if (b.phase == 0) o.add(b);
-                        else if (b.phase == 1) m.add(b);
+                final JSONArray arr = r.optJSONArray("response");
+                parseIo.execute(() -> {                       // parse off the UI thread
+                    List<Bet> o = new ArrayList<>();
+                    List<Bet> m = new ArrayList<>();
+                    if (arr != null) {
+                        for (int i = 0; i < arr.length(); i++) {
+                            JSONObject cj = arr.optJSONObject(i);
+                            if (cj == null || cj.optBoolean("spent", false)) continue;
+                            BetCoin bc = BetCoin.from(cj);
+                            Bet b = Bet.from(bc, myKeys, tipBlock);
+                            if (b.phase == 0) o.add(b);
+                            else if (b.phase == 1) m.add(b);
+                        }
                     }
-                }
-                open.clear(); open.addAll(o);
-                matched.clear(); matched.addAll(m);
+                    ui.post(() -> {                            // swap + notify on main (cheap)
+                        open.clear(); open.addAll(o);
+                        matched.clear(); matched.addAll(m);
+                        scanning = false;
+                        if (listener != null) listener.onScanned();
+                    });
+                });
+            }
+            public void onError(String e) {
+                scanning = false;
                 if (listener != null) listener.onScanned();
             }
-            public void onError(String e) { if (listener != null) listener.onScanned(); }
         });
     }
 

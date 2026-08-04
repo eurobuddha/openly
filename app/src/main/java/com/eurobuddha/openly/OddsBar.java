@@ -22,6 +22,7 @@ public class OddsBar extends View {
     private float truePct = 0.5f;     // rendered split
     private float targetPct = 0.5f;
     private boolean hasBets = false;
+    private boolean hasTrue = true, hasFalse = true;
     private String trueLabel = "", falseLabel = "";
     private final Paint textP = new Paint(Paint.ANTI_ALIAS_FLAG);
 
@@ -31,12 +32,15 @@ public class OddsBar extends View {
         textP.setTextSize(Design.dp(c, 11));
     }
 
-    /** tp = TRUE fraction in [0,1]; labels are the money asks shown inset. */
-    public void setOdds(float tp, String tLabel, String fLabel, boolean bets, boolean animate) {
+    /** tp = TRUE fraction in [0,1]; labels are the money asks shown inset; hasTrue/hasFalse flag a
+     *  one-sided market so the empty side renders as a muted "awaiting" strip, not a blob. */
+    public void setOdds(float tp, String tLabel, String fLabel, boolean hasTrue, boolean hasFalse, boolean animate) {
         this.targetPct = Math.max(0.08f, Math.min(0.92f, tp));
         this.trueLabel = tLabel;
         this.falseLabel = fLabel;
-        this.hasBets = bets;
+        this.hasTrue = hasTrue;
+        this.hasFalse = hasFalse;
+        this.hasBets = hasTrue || hasFalse;
         if (!animate) { this.truePct = targetPct; invalidate(); return; }
         ValueAnimator a = ValueAnimator.ofFloat(this.truePct, targetPct);
         a.setDuration(350);
@@ -61,22 +65,33 @@ public class OddsBar extends View {
             cv.drawText("NO TAKERS YET", w / 2f, h / 2f + textP.getTextSize() / 3f, textP);
             return;
         }
+        float ty = h / 2f + textP.getTextSize() / 3f;
+        int pad = Design.dp(getContext(), 12);
+        // One-sided market: present side fills; the empty side is a muted "awaiting a taker" strip.
+        if (!hasTrue || !hasFalse) {
+            boolean t = hasTrue;
+            float frac = 0.66f;
+            float split = w * frac;
+            fill.setColor(t ? Design.TRUE_C() : Design.FALSE_C());
+            r.set(0, 0, split, h); cv.drawRoundRect(r, rad, rad, fill);
+            fill.setColor(Design.SURFACE2());
+            r.set(split + Design.dp(getContext(), 3), 0, w, h); cv.drawRoundRect(r, rad, rad, fill);
+            textP.setColor(Design.ON_ACCENT()); textP.setTextAlign(Paint.Align.LEFT);
+            cv.drawText(t ? trueLabel : falseLabel, pad, ty, textP);
+            textP.setColor(Design.DIM()); textP.setTextAlign(Paint.Align.RIGHT);
+            cv.drawText(t ? "needs FALSE" : "needs TRUE", w - pad, ty, textP);
+            return;
+        }
         int gap = Design.dp(getContext(), 3);
         float split = w * truePct;
-        // TRUE (left)
         fill.setColor(Design.TRUE_C());
-        r.set(0, 0, split - gap / 2f, h);
-        cv.drawRoundRect(r, rad, rad, fill);
-        // FALSE (right)
+        r.set(0, 0, split - gap / 2f, h); cv.drawRoundRect(r, rad, rad, fill);
         fill.setColor(Design.FALSE_C());
-        r.set(split + gap / 2f, 0, w, h);
-        cv.drawRoundRect(r, rad, rad, fill);
-        // labels
+        r.set(split + gap / 2f, 0, w, h); cv.drawRoundRect(r, rad, rad, fill);
         textP.setColor(Design.ON_ACCENT());
         textP.setTextAlign(Paint.Align.LEFT);
-        float ty = h / 2f + textP.getTextSize() / 3f;
-        if (split > Design.dp(getContext(), 64)) cv.drawText(trueLabel, Design.dp(getContext(), 10), ty, textP);
+        if (split > Design.dp(getContext(), 64)) cv.drawText(trueLabel, pad, ty, textP);
         textP.setTextAlign(Paint.Align.RIGHT);
-        if (w - split > Design.dp(getContext(), 64)) cv.drawText(falseLabel, w - Design.dp(getContext(), 10), ty, textP);
+        if (w - split > Design.dp(getContext(), 64)) cv.drawText(falseLabel, w - pad, ty, textP);
     }
 }

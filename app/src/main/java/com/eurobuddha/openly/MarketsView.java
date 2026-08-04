@@ -71,9 +71,10 @@ public class MarketsView extends BaseView {
         card.addView(Ui.text(act, m.prop == null || m.prop.isEmpty() ? "Untitled" : m.prop,
                 Design.TEXT(), 15, true));
 
-        BigDecimal trueAsk = BigDecimal.ZERO, falseAsk = BigDecimal.ZERO;
-        for (Bet b : m.yes) trueAsk = Num.add(trueAsk, b.counterBet());
-        for (Bet b : m.no) falseAsk = Num.add(falseAsk, b.counterBet());
+        Bet bestTrue = pickBest(m.yes), bestFalse = pickBest(m.no);
+        // "Ask" = the stake the taker of that side must put up (the poster's wantstake).
+        BigDecimal trueAsk = bestTrue != null ? bestTrue.counterBet() : BigDecimal.ZERO;
+        BigDecimal falseAsk = bestFalse != null ? bestFalse.counterBet() : BigDecimal.ZERO;
 
         OddsBar bar = new OddsBar(act);
         LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
@@ -82,36 +83,63 @@ public class MarketsView extends BaseView {
         bar.setLayoutParams(blp);
         float total = trueAsk.add(falseAsk).floatValue();
         float pct = total <= 0 ? 0.5f : trueAsk.floatValue() / total;
-        boolean bets = !m.yes.isEmpty() || !m.no.isEmpty();
-        bar.setOdds(pct, "TRUE " + Ui.compact(trueAsk), "FALSE " + Ui.compact(falseAsk), bets, false);
+        bar.setOdds(pct, "TRUE " + Ui.compact(trueAsk), "FALSE " + Ui.compact(falseAsk),
+                bestTrue != null, bestFalse != null, false);
         card.addView(bar);
 
-        int count = m.yes.size() + m.no.size();
-        LinearLayout foot = Ui.row(act);
-        Ui.topMargin(foot, Ui.dp(act, 10));
-        foot.addView(Ui.text(act, count + " open · TRUE " + m.yes.size() + " / FALSE " + m.no.size(),
-                Design.DIM(), 11, false));
-        card.addView(foot);
+        // Per-side offer lines: "TRUE bet 0.5 → win 1  (2.0×)". Shows what each poster staked and the
+        // multiple they'd win, so a taker understands the price before opening the slider.
+        if (bestTrue != null) card.addView(offerLine(bestTrue, 1));
+        if (bestFalse != null) card.addView(offerLine(bestFalse, 0));
 
-        // Take buttons: taking a TRUE offer means I bet FALSE, and vice versa.
-        Bet bestTrue = pickBest(m.yes), bestFalse = pickBest(m.no);
+        // YOURS — my position in this market (owner sees their stake + odds).
+        Bet mine = null;
+        for (Bet b : m.yes) if (b.isMine) mine = b;
+        for (Bet b : m.no) if (b.isMine) mine = b;
+        if (mine != null) {
+            TextView yours = Ui.money(act, "YOURS: " + (mine.side == 1 ? "TRUE" : "FALSE") + " "
+                    + Num.plain(mine.ownerBet()) + " → win " + Num.plain(mine.counterBet())
+                    + "  ·  waiting for a taker", Design.GOLD(), 12, false);
+            Ui.topMargin(yours, Ui.dp(act, 10));
+            card.addView(yours);
+        }
+
+        // Actions: take/counter the OPPOSITE side of an offer I didn't post. Taking a TRUE offer
+        // means I bet FALSE, and vice versa. The sheet lets me take at full ask or counter the price.
         LinearLayout actions = Ui.row(act);
         Ui.topMargin(actions, Ui.dp(act, 12));
         if (bestTrue != null && !bestTrue.isMine) {
-            TextView t = Ui.button(act, "Take FALSE", Design.FALSE_SOFT(), Design.FALSE_C(), false);
+            TextView t = Ui.button(act, "Bet FALSE →", Design.FALSE_SOFT(), Design.FALSE_C(), false);
             final Bet b = bestTrue;
             t.setOnClickListener(v -> new CounterSheet(act, b).show());
             LinearLayout.LayoutParams lp = Ui.weight(1); lp.rightMargin = Ui.dp(act, 6);
             actions.addView(t, lp);
         }
         if (bestFalse != null && !bestFalse.isMine) {
-            TextView t = Ui.button(act, "Take TRUE", Design.TRUE_SOFT(), Design.TRUE_C(), false);
+            TextView t = Ui.button(act, "Bet TRUE →", Design.TRUE_SOFT(), Design.TRUE_C(), false);
             final Bet b = bestFalse;
             t.setOnClickListener(v -> new CounterSheet(act, b).show());
             actions.addView(t, Ui.weight(1));
         }
         if (actions.getChildCount() > 0) card.addView(actions);
         return card;
+    }
+
+    /** "TRUE  bet 0.5 → win 1  ·  2.0×" — one poster's offer and the multiple they win. */
+    private View offerLine(Bet b, int side) {
+        BigDecimal stake = b.ownerBet(), want = b.counterBet();
+        String mult = want.signum() > 0 && stake.signum() > 0
+                ? want.divide(stake, Num.MC).stripTrailingZeros().toPlainString() + "×" : "—";
+        LinearLayout row = Ui.row(act);
+        Ui.topMargin(row, Ui.dp(act, 8));
+        row.addView(Ui.text(act, side == 1 ? "TRUE" : "FALSE", Design.sideColor(side), 12, true));
+        row.addView(Ui.money(act, "  bet " + Num.plain(stake) + " → win " + Num.plain(want),
+                Design.DIM(), 12, false));
+        TextView m = Ui.money(act, mult, Design.sideColor(side), 12, true);
+        LinearLayout.LayoutParams lp = Ui.weight(1);
+        m.setGravity(android.view.Gravity.END);
+        row.addView(m, lp);
+        return row;
     }
 
     private Bet pickBest(List<Bet> side) {

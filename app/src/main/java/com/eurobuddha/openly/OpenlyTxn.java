@@ -228,6 +228,7 @@ public class OpenlyTxn {
 
     /** Query sendable coinids and prune inflight to them (a spent funding coin is released). */
     public void refreshInflight() {
+        if (inflightCoins.isEmpty()) return;   // nothing reserved → skip the (possibly large) query
         node.cmd("coins sendable:true tokenid:0x00", new NodeApi.Cb() {
             public void onResult(JSONObject r) {
                 java.util.Set<String> present = ConcurrentHashMap.newKeySet();
