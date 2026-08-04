@@ -106,7 +106,65 @@ public class MyBetsView extends BaseView {
         TextView lose = Ui.money(act, "If you lose  -" + Num.plain(myStake), Design.NEG(), 13, false);
         Ui.topMargin(lose, Ui.dp(act, 2));
         card.addView(lose);
+
+        // Incoming proposal → Agree / Disagree. Their declared outcome is shown (Phase 6 keeps it simple;
+        // the sealed-envelope reveal is a Phase 9 polish item).
+        OpenlyDb.Proposal in = act.db.inboundProposal(b.nonce);
+        if (in != null) {
+            String word = in.outcome == 2 ? "VOID" : in.outcome == 1 ? "TRUE" : "FALSE";
+            TextView from = Ui.text(act, "Counterparty says: " + word, Design.GOLD(), 13, true);
+            Ui.topMargin(from, Ui.dp(act, 12));
+            card.addView(from);
+            TextView sub = Ui.text(act, "Agree → 0% fee. Disagree → arbiter decides (10%).", Design.DIM(), 11, false);
+            Ui.topMargin(sub, Ui.dp(act, 4));
+            card.addView(sub);
+            LinearLayout row = Ui.row(act);
+            Ui.topMargin(row, Ui.dp(act, 10));
+            TextView agree = Ui.button(act, "Agree", Design.TRUE_SOFT(), Design.TRUE_C(), false);
+            agree.setOnClickListener(v -> {
+                agree.setEnabled(false);
+                act.settle.accept(b, new SettleEngine.Cb() {
+                    public void ok() { act.toast("Settled — 0% fee, confirming"); act.refreshCurrent(); }
+                    public void fail(String m) { act.toast("Settle rejected: " + m); agree.setEnabled(true); }
+                });
+            });
+            TextView disagree = Ui.button(act, "Disagree", Design.SURFACE2(), Design.DIM(), false);
+            disagree.setOnClickListener(v -> act.toast("Dispute → arbiter (Phase 7)"));
+            LinearLayout.LayoutParams lp = Ui.weight(1); lp.rightMargin = Ui.dp(act, 6);
+            row.addView(agree, lp);
+            row.addView(disagree, Ui.weight(1));
+            card.addView(row);
+            return card;
+        }
+
+        // Otherwise: declare what happened.
+        TextView decideTitle = Ui.text(act, "What happened?", Design.TEXT(), 13, true);
+        Ui.topMargin(decideTitle, Ui.dp(act, 12));
+        card.addView(decideTitle);
+        LinearLayout drow = Ui.row(act);
+        Ui.topMargin(drow, Ui.dp(act, 8));
+        TextView t = Ui.button(act, "TRUE", Design.TRUE_SOFT(), Design.TRUE_C(), false);
+        TextView f = Ui.button(act, "FALSE", Design.FALSE_SOFT(), Design.FALSE_C(), false);
+        TextView vd = Ui.button(act, "Void", Design.SURFACE2(), Design.DIM(), false);
+        t.setOnClickListener(v -> declare(b, 1));
+        f.setOnClickListener(v -> declare(b, 0));
+        vd.setOnClickListener(v -> declare(b, 2));
+        LinearLayout.LayoutParams l1 = Ui.weight(1); l1.rightMargin = Ui.dp(act, 6);
+        LinearLayout.LayoutParams l2 = Ui.weight(1); l2.rightMargin = Ui.dp(act, 6);
+        drow.addView(t, l1);
+        drow.addView(f, l2);
+        drow.addView(vd, Ui.weight(0.6f));
+        card.addView(drow);
         return card;
+    }
+
+    private void declare(Bet b, int outcome) {
+        String word = outcome == 2 ? "VOID" : outcome == 1 ? "TRUE" : "FALSE";
+        act.toast("Proposing " + word + "…");
+        act.settle.propose(b, outcome, new SettleEngine.Cb() {
+            public void ok() { act.toast("Proposal sent — waiting for counterparty"); act.refreshCurrent(); }
+            public void fail(String m) { act.toast("Propose failed: " + m); }
+        });
     }
 
     private View empty() {

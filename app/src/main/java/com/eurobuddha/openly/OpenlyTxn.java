@@ -195,4 +195,47 @@ public class OpenlyTxn {
 
     /** Prune inflight reservations to coins still present (called after a confirmation scan). */
     public void pruneInflight(Set<String> present) { inflightCoins.retainAll(present); }
+
+    // ---------------------------------------------------------------- SETTLE build (proposer)
+    public interface Exported { void ok(String hex); void fail(String msg); }
+
+    /**
+     * Proposer builds a 2-of-2 settlement: input the contract coin only, two payout outputs
+     * (winner pot-le, loser le; or the void pair), state port 20 = outcome, sign with MY exact bet
+     * key (never auto), export the hex, then txndelete (no lingering pending txn). The exported hex
+     * goes to the counterparty who validates it via {@link CoSigner} before co-signing.
+     */
+    public void buildSettle(Bet bet, int outcome, String myBetPk,
+                            String winnerAddr, BigDecimal winnerAmt,
+                            String loserAddr, BigDecimal loserAmt, Exported cb) {
+        final String txid = tag("settle");
+        List<String> cmds = new ArrayList<>();
+        cmds.add("txncreate id:" + txid);
+        cmds.add("txninput id:" + txid + " coinid:" + bet.coinid);
+        cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(winnerAmt)
+                + " address:" + winnerAddr + " storestate:false");
+        cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(loserAmt)
+                + " address:" + loserAddr + " storestate:false");
+        cmds.add("txnstate id:" + txid + " port:20 value:" + outcome);
+        cmds.add("txnsign id:" + txid + " publickey:" + myBetPk);
+        SignGate.submit(gate -> CmdChain.run(node, cmds, "txndelete id:" + txid, new CmdChain.Done() {
+            public void ok(JSONObject last) {
+                node.cmd("txnexport id:" + txid, new NodeApi.Cb() {
+                    public void onResult(JSONObject r) {
+                        gate.free();
+                        String hex = r.optJSONObject("response") != null
+                                ? r.optJSONObject("response").optString("data", "") : "";
+                        node.cmd("txndelete id:" + txid, NodeApi.Cb.NOOP);   // no lingering pending txn
+                        if (hex.isEmpty()) cb.fail("export empty"); else cb.ok(hex);
+                    }
+                    public void onError(String e) {
+                        gate.free();
+                        node.cmd("txndelete id:" + txid, NodeApi.Cb.NOOP);
+                        cb.fail("export: " + e);
+                    }
+                });
+            }
+            public void fail(String msg) { gate.free(); cb.fail(msg); }
+        }));
+    }
 }

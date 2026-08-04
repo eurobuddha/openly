@@ -61,6 +61,7 @@ public class MainActivity extends AppCompatActivity {
     public OpenlyTxn txn;
     public OpenlyDb db;
     public OpenlyComms comms;
+    public SettleEngine settle;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -112,6 +113,7 @@ public class MainActivity extends AppCompatActivity {
         txn = new OpenlyTxn(node, identity);
         db = new OpenlyDb(this);
         comms = new OpenlyComms(this, node, db, this::onCommsMessage);
+        settle = new SettleEngine(this);
         registerNotifyReceiver();
         ensureContract();
         identity.ensure(() -> {
@@ -133,7 +135,10 @@ public class MainActivity extends AppCompatActivity {
                 || m.from.equals(bet.arbcommsid);
         if (!senderIsParty) return false;                     // spoofed sender — drop
         boolean fresh = db.insertMessageIfNew(m, true);
-        if (fresh) ui.post(this::refreshCurrent);
+        if (fresh) {
+            if (OpenlyMessage.SETTLE_PROPOSE.equals(m.type)) settle.onInboundPropose(m);
+            ui.post(this::refreshCurrent);
+        }
         return fresh;
     }
 
