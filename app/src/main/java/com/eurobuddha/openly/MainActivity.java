@@ -82,6 +82,11 @@ public class MainActivity extends AppCompatActivity {
         pairingBanner = findViewById(R.id.pairingBanner);
         findViewById(R.id.openNodeBtn).setOnClickListener(x -> openNodeApp());
 
+        // Header: theme toggle restyles the whole app (no recreate) — nice for testing both looks.
+        TextView designToggle = findViewById(R.id.designToggle);
+        designToggle.setOnClickListener(x -> { Design.toggle(this); styleChrome(); renderAll(); });
+        styleChrome();
+
         pager = findViewById(R.id.pager);
         TabLayout tabs = findViewById(R.id.tabs);
 
@@ -179,6 +184,37 @@ public class MainActivity extends AppCompatActivity {
         v.refresh();
     }
 
+    private void renderAll() {
+        for (int i = 0; i < pagerAdapter.getCount(); i++) pagerAdapter.viewAt(i).refresh();
+    }
+
+    /** Recolor the XML header chrome from Design tokens so the theme toggle restyles everything. */
+    private void styleChrome() {
+        View root = findViewById(R.id.main);
+        if (root != null) root.setBackgroundColor(Design.BG());
+        TextView brand = findViewById(R.id.brandTitle);
+        TextView sub = findViewById(R.id.brandSub);
+        TextView tgl = findViewById(R.id.designToggle);
+        if (brand != null) { brand.setTextColor(Design.ACCENT()); brand.setText("Openly"); }
+        if (sub != null) { sub.setTextColor(Design.DIM()); sub.setText("PROPOSE ANYTHING"); }
+        if (tgl != null) tgl.setTextColor(Design.ACCENT());
+        if (blockNo != null) blockNo.setTextColor(Design.DIM());
+        updateHeaderStat();
+    }
+
+    private void updateHeaderStat() {
+        if (blockNo == null) return;
+        String bal = "—".equals(balance) ? "—" : safeBal(balance);
+        blockNo.setText(bal + " M  ·  #" + currentBlock);
+    }
+
+    private static String safeBal(String b) {
+        try {
+            java.math.BigDecimal d = new java.math.BigDecimal(b);
+            return d.setScale(2, java.math.RoundingMode.DOWN).stripTrailingZeros().toPlainString();
+        } catch (Exception e) { return b; }
+    }
+
     public NodeApi node() { return node; }
     public int block() { return currentBlock; }
 
@@ -213,7 +249,7 @@ public class MainActivity extends AppCompatActivity {
             public void onResult(JSONObject r) {
                 try {
                     currentBlock = r.getJSONObject("response").getInt("block");
-                    blockNo.setText("#" + currentBlock);
+                    updateHeaderStat();
                 } catch (Exception ignored) {}
                 if (scanner != null) scanner.scan(currentBlock);
                 if (comms != null && comms.ready()) comms.scan(currentBlock);
@@ -233,6 +269,7 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
                 } catch (Exception ignored) {}
+                updateHeaderStat();
                 BaseView v = pagerAdapter.viewAt(pager.getCurrentItem());
                 v.refresh();
             }

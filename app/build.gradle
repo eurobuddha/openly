@@ -28,6 +28,15 @@ android {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
     }
+    // Android 15+/16 want 16 KB-aligned native libs. Uncompressed + zip-aligned .so is the modern
+    // default; combined with JNA 5.14 (16 KB-aligned libjnidispatch.so) this clears the JNA warning.
+    // libsodium.so (lazysodium 5.1.0) is still not internally 16 KB-aligned — a dismissible warning,
+    // not a crash; testing proceeds. Tracked to fix before a Play release.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
+    }
 }
 
 dependencies {
@@ -49,5 +58,5 @@ dependencies {
     // The node has no Maxima over IPC, so all encryption/signing happens in-app; the node
     // only carries the sealed blob in coin state. Keys derive from the Minima seed.
     implementation 'com.goterl:lazysodium-android:5.1.0@aar'
-    implementation 'net.java.dev.jna:jna:5.13.0@aar'
+    implementation 'net.java.dev.jna:jna:5.14.0@aar'   // 16 KB-page-aligned libjnidispatch.so
 }
