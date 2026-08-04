@@ -212,4 +212,11 @@ public class MyBetsView extends BaseView {
     }
 
     @Override public void onNewBlock() { refresh(); }
+
+    @Override public void onShown() {
+        // Opening My Bets triggers a deep comms rescan so a settlement proposal that arrived while
+        // backgrounded is recovered and its Agree/Disagree card appears.
+        if (act.comms != null && act.comms.ready()) act.comms.deepRescan(act.block());
+        refresh();
+    }
 }

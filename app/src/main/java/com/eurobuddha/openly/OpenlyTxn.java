@@ -379,7 +379,7 @@ public class OpenlyTxn {
             cmds.add("txnscript id:" + txid + " scripts:"
                     + mastArg(OpenlyContract.LEAF_VOID, OpenlyContract.PROOF_VOID));
         }
-        cmds.add("txnsign id:" + txid + " publickey:" + myBetPk);
+        cmds.add("txnsign id:" + txid + " publickey:auto");   // only input is the contract coin
         SignGate.submit(gate -> CmdChain.run(node, cmds, "txndelete id:" + txid, new CmdChain.Done() {
             public void ok(JSONObject last) {
                 node.cmd("txnexport id:" + txid, new NodeApi.Cb() {

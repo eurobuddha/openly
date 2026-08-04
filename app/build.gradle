@@ -2,6 +2,18 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+// Automatic versioning derived from git — no hand-set "1.0.0". versionCode = commit count,
+// versionName = 0.0.<count>+<shortSha> (with "-dirty" when the tree has uncommitted changes), so a
+// build's version always maps back to an exact commit. Pre-1.0 while in active development.
+def gitCount = { ->
+    try { return "git rev-list --count HEAD".execute(null, rootDir).text.trim().toInteger() }
+    catch (ignored) { return 1 }
+}
+def gitVersionName = { ->
+    try { return "git describe --tags --always --dirty".execute(null, rootDir).text.trim() }
+    catch (ignored) { return "dev" }
+}
+
 android {
     namespace 'com.eurobuddha.openly'
     compileSdk 36
@@ -10,8 +22,8 @@ android {
         applicationId "com.eurobuddha.openly"
         minSdk 28
         targetSdk 35
-        versionCode 100
-        versionName "1.0.0"
+        versionCode gitCount()
+        versionName "0.0." + gitCount() + "+" + gitVersionName()
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 

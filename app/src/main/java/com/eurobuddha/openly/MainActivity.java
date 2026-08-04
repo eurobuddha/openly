@@ -9,6 +9,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -72,9 +73,10 @@ public class MainActivity extends AppCompatActivity {
 
         View mainRoot = findViewById(R.id.main);
         ViewCompat.setOnApplyWindowInsetsListener(mainRoot, (v, insets) -> {
-            int top = insets.getInsets(WindowInsetsCompat.Type.systemBars()).top;
-            int bottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
-            v.setPadding(v.getPaddingLeft(), top, v.getPaddingRight(), bottom);
+            androidx.core.graphics.Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            int ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
+            // Top clears the status bar; bottom clears the nav bar (or the keyboard when it's up).
+            v.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, ime));
             return insets;
         });
 
@@ -129,6 +131,9 @@ public class MainActivity extends AppCompatActivity {
         });
         try { OpenlyService.start(this); } catch (Exception ignored) {}
 
+        installStatusStrip();
+        showVersion();
+
         // First-run onboarding overlay on top of the content frame.
         android.widget.FrameLayout onb = new android.widget.FrameLayout(this);
         ((android.view.ViewGroup) findViewById(android.R.id.content)).addView(onb,
@@ -145,10 +150,14 @@ public class MainActivity extends AppCompatActivity {
      */
     private boolean onCommsMessage(OpenlyMessage m, JSONObject coin) {
         Bet bet = betByNonce(m.ref);
-        if (bet == null) return false;                        // unknown bet — drop
+        if (bet == null) {
+            android.util.Log.d("OpenlyComms", "sink: no bet for nonce " + m.ref);
+            return false;                                     // unknown bet — drop
+        }
         boolean senderIsParty = m.from.equals(bet.ownercommsid)
                 || m.from.equals(bet.countercommsid)
                 || m.from.equals(bet.arbcommsid);
+        android.util.Log.d("OpenlyComms", "sink: type=" + m.type + " party=" + senderIsParty);
         if (!senderIsParty) return false;                     // spoofed sender — drop
         boolean fresh = db.insertMessageIfNew(m, true);
         if (fresh) {
@@ -165,9 +174,53 @@ public class MainActivity extends AppCompatActivity {
         return null;
     }
 
-    /** Toast-ish status line via the block header (kept minimal for Phase 3). */
+    // ---- feedback: a persistent one-line status strip + rolling log ----
+    private TextView statusStrip;
+    private final java.util.ArrayDeque<String> logBuffer = new java.util.ArrayDeque<>();
+
+    private void installStatusStrip() {
+        LinearLayout root = findViewById(R.id.main);
+        if (root == null) return;
+        statusStrip = new TextView(this);
+        statusStrip.setTextSize(11);
+        statusStrip.setTypeface(Design.mono());
+        statusStrip.setTextColor(Design.DIM());
+        statusStrip.setText("Ready");
+        statusStrip.setSingleLine(true);
+        statusStrip.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        statusStrip.setBackgroundColor(Design.SURFACE2());
+        int px = Design.dp(this, 16), py = Design.dp(this, 6);
+        statusStrip.setPadding(px, py, px, py);
+        statusStrip.setOnClickListener(v -> showLogDialog());
+        // Insert just under the header (index 1), above the pairing banner / tabs.
+        root.addView(statusStrip, 1, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+    }
+
+    private void showVersion() {
+        String ver = "";
+        try { ver = getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception ignored) {}
+        TextView sub = findViewById(R.id.brandSub);
+        if (sub != null && !ver.isEmpty()) sub.setText("PROPOSE ANYTHING · v" + ver);
+    }
+
+    private void showLogDialog() {
+        StringBuilder sb = new StringBuilder();
+        for (String s : logBuffer) sb.append(s).append("\n");
+        androidx.appcompat.app.AlertDialog.Builder b = new androidx.appcompat.app.AlertDialog.Builder(this);
+        b.setTitle("Activity").setMessage(sb.length() == 0 ? "No activity yet" : sb.toString())
+                .setPositiveButton("Close", null).show();
+    }
+
+    /** Persistent feedback: updates the status strip + rolling log (tap the strip for history). */
     public void toast(String msg) {
-        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show();
+        if (statusStrip != null) {
+            statusStrip.setText(msg);
+            Design.pulse(statusStrip, Design.ACCENT());
+        }
+        String ts = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(new java.util.Date());
+        logBuffer.addFirst(ts + "  " + msg);
+        while (logBuffer.size() > 40) logBuffer.removeLast();
     }
 
     /** Refresh the currently visible page. */
@@ -315,6 +368,8 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         FOREGROUND = true;
         requestReload();
+        // Recover any settlement proposals that arrived while backgrounded (deep comms rescan).
+        if (comms != null && comms.ready()) comms.deepRescan(currentBlock);
     }
 
     @Override protected void onPause() {

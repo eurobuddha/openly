@@ -2,6 +2,7 @@ package com.eurobuddha.openly;
 
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import org.json.JSONObject;
 
@@ -102,9 +103,25 @@ public class OpenlyComms {
         });
     }
 
+    private static final String TAG = "OpenlyComms";
+
     /** Scan the channel for inbound messages (call on each block; the scanner self-throttles). */
     public void scan(int block) {
         if (scanner != null) scanner.scan(block);
+    }
+
+    /**
+     * Force the NEXT scan to look back a wide window by resetting the scanner's tip bookmark. Recovers
+     * proposals that arrived while the app was backgrounded (the forward-only scanner would otherwise
+     * miss them once its tip advanced). Idempotent — dedup on messages.randomid. Call on resume / when
+     * a settlement is pending.
+     */
+    public void deepRescan(int block) {
+        String tag = OpenlyContract.MAIL_ADDR.length() > 10
+                ? OpenlyContract.MAIL_ADDR.substring(2, 10) : OpenlyContract.MAIL_ADDR;
+        db.setMeta("scanned_tip_" + tag, "0");   // gap → MAX_DEPTH on the next scan
+        Log.d(TAG, "deepRescan: reset tip, scanning deep at block " + block);
+        scan(block);
     }
 
     /** Router callback from the scanner: seal opened + signature verified. Dedup + hand to sink. */
@@ -112,7 +129,10 @@ public class OpenlyComms {
         if (opened == null || !opened.valid) return false;
         OpenlyMessage m = OpenlyMessage.fromWire(opened.plaintext, opened.fromPublicId);
         if (m == null || m.randomid.isEmpty() || m.ref.isEmpty()) return false;
-        if (!m.to.equals(myId())) return false;            // not addressed to me
+        boolean forMe = m.to.equals(myId());
+        Log.d(TAG, "route: type=" + m.type + " ref=" + (m.ref.length() > 12 ? m.ref.substring(0, 12) : m.ref)
+                + " forMe=" + forMe + " from=" + (m.from == null ? "?" : (m.from.length() > 12 ? m.from.substring(0, 12) : m.from)));
+        if (!forMe) return false;                          // not addressed to me
         m.coinid = m.coinid == null || m.coinid.isEmpty() ? coinid : m.coinid;
         // sink does party-authentication (needs on-chain bet state) + storage + dispatch
         final boolean[] fresh = {false};

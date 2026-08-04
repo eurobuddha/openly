@@ -47,9 +47,9 @@ public class MarketsView extends BaseView {
     @Override public void refresh() {
         list.removeAllViews();
 
-        List<Bet> matchedMine = new ArrayList<>();
-        for (Bet b : act.scanner.matched) if (b.isMine || b.isMyCounter || b.isMyArb) matchedMine.add(b);
-
+        // Markets shows OPEN (phase-0) bets ONLY. A taken bet becomes phase 1 → it leaves
+        // scanner.open and disappears from here; it lives in My Bets. Showing matched bets on the
+        // board was misleading (looked still-takeable).
         Map<String, Market> markets = new LinkedHashMap<>();
         for (Bet b : act.scanner.open) {
             String key = b.proposition == null || b.proposition.isEmpty() ? b.coinid : b.proposition;
@@ -58,11 +58,10 @@ public class MarketsView extends BaseView {
             (b.side == 1 ? m.yes : m.no).add(b);
         }
 
-        if (markets.isEmpty() && matchedMine.isEmpty()) {
+        if (markets.isEmpty()) {
             list.addView(empty());
             return;
         }
-        for (Bet b : matchedMine) list.addView(liveRow(b));
         for (Market m : markets.values()) list.addView(marketCard(m));
     }
 
@@ -109,14 +108,14 @@ public class MarketsView extends BaseView {
         LinearLayout actions = Ui.row(act);
         Ui.topMargin(actions, Ui.dp(act, 12));
         if (bestTrue != null && !bestTrue.isMine) {
-            TextView t = Ui.button(act, "Bet FALSE →", Design.FALSE_SOFT(), Design.FALSE_C(), false);
+            TextView t = Ui.button(act, "Accept / Counter TRUE", Design.FALSE_SOFT(), Design.FALSE_C(), false);
             final Bet b = bestTrue;
             t.setOnClickListener(v -> new CounterSheet(act, b).show());
             LinearLayout.LayoutParams lp = Ui.weight(1); lp.rightMargin = Ui.dp(act, 6);
             actions.addView(t, lp);
         }
         if (bestFalse != null && !bestFalse.isMine) {
-            TextView t = Ui.button(act, "Bet TRUE →", Design.TRUE_SOFT(), Design.TRUE_C(), false);
+            TextView t = Ui.button(act, "Accept / Counter FALSE", Design.TRUE_SOFT(), Design.TRUE_C(), false);
             final Bet b = bestFalse;
             t.setOnClickListener(v -> new CounterSheet(act, b).show());
             actions.addView(t, Ui.weight(1));

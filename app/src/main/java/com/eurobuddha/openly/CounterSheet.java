@@ -7,10 +7,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
-
-import androidx.annotation.NonNull;
 
 import org.json.JSONObject;
 
@@ -19,36 +18,40 @@ import java.math.BigDecimal;
 import com.eurobuddha.comms.NodeApi;
 
 /**
- * The Counter/Take surface — a bottom sheet with a stake slider from a floor up to the FULL ASK.
+ * Accept / Counter an open bet. The slider sets MY STAKE, from a floor up to the full ask.
  *
- *  - At the full ask  → TAKE: fill the bet directly (fillBet).
- *  - Below the ask    → COUNTER: post a new bet on the opposite side (my stake = their bet, my
- *    want = slider value). A counter is an offer, not a fill — the CTA reflects that.
+ *  - At the full ask (right)  → ACCEPT: fill the existing bet at their terms.
+ *  - Below the full ask (left) → COUNTER: post my own opposite-side bet with a lower stake for the
+ *    same win — a better-priced offer the poster (or anyone) can take.
  *
- * This is the signature interaction; the CTA morphs TAKE ↔ COUNTER as you leave the ask.
+ * I always win the poster's stake; I risk my slider stake. Scrollable + dismissible (tap outside or
+ * the Close row), padded above the nav bar.
  */
 public class CounterSheet extends Dialog {
 
     private final MainActivity act;
     private final Bet bet;
-    private final BigDecimal theirBet;   // displayed stake the owner put up
-    private final BigDecimal theirAsk;   // displayed stake they want from me (== full take)
+    private final BigDecimal theirStake;   // poster's stake — what I WIN if I win
+    private final BigDecimal fullAsk;      // poster's wantstake — the max I'd stake (accept point)
+    private final int mySide;              // opposite of the poster
 
     private SeekBar slider;
-    private TextView valLabel, escrowLabel, termsWin, termsLose, cta, status;
+    private TextView valLabel, escrowLabel, termsWin, termsLose, cta, status, modeLabel;
     private static final int STEPS = 1000;
 
     public CounterSheet(MainActivity a, Bet bet) {
         super(a, android.R.style.Theme_Translucent_NoTitleBar);
         this.act = a;
         this.bet = bet;
-        this.theirBet = bet.ownerBet();
-        this.theirAsk = bet.counterBet();
+        this.theirStake = bet.ownerBet();
+        this.fullAsk = bet.counterBet();
+        this.mySide = bet.side == 1 ? 0 : 1;
     }
 
     @Override protected void onCreate(Bundle s) {
         super.onCreate(s);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
+        setCanceledOnTouchOutside(true);   // tap the dimmed area to dismiss
         Window w = getWindow();
         if (w != null) {
             w.setBackgroundDrawableResource(android.R.color.transparent);
@@ -60,36 +63,47 @@ public class CounterSheet extends Dialog {
     }
 
     private View build() {
-        LinearLayout sheet = Ui.col(act);
-        sheet.setBackground(Design.roundBg(act, Design.SURFACE(), 24));
-        int p = Ui.dp(act, 20);
-        sheet.setPadding(p, Ui.dp(act, 12), p, p);
+        // Cap the sheet at ~88% of screen height and make it scroll, so the CTA is always reachable.
+        ScrollView scroll = new ScrollView(act) {
+            @Override protected void onMeasure(int wSpec, int hSpec) {
+                int max = (int) (act.getResources().getDisplayMetrics().heightPixels * 0.88f);
+                super.onMeasure(wSpec, MeasureSpec.makeMeasureSpec(max, MeasureSpec.AT_MOST));
+            }
+        };
+        scroll.setBackground(Design.roundBg(act, Design.SURFACE(), 24));
 
-        // drag handle
+        LinearLayout sheet = Ui.col(act);
+        int p = Ui.dp(act, 20);
+        int navPad = Ui.dp(act, 28);   // clear the system nav bar
+        sheet.setPadding(p, Ui.dp(act, 10), p, navPad);
+        scroll.addView(sheet, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // drag handle (tap to dismiss)
         View handle = new View(act);
-        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(Ui.dp(act, 36), Ui.dp(act, 4));
-        hlp.gravity = Gravity.CENTER_HORIZONTAL; hlp.bottomMargin = Ui.dp(act, 14);
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(Ui.dp(act, 40), Ui.dp(act, 5));
+        hlp.gravity = Gravity.CENTER_HORIZONTAL; hlp.bottomMargin = Ui.dp(act, 12);
         handle.setLayoutParams(hlp);
         handle.setBackground(Design.roundBg(act, Design.SURFACE3(), 999));
+        handle.setOnClickListener(v -> dismiss());
         sheet.addView(handle);
 
         String theirSide = bet.side == 1 ? "TRUE" : "FALSE";
+        String mySideWord = mySide == 1 ? "TRUE" : "FALSE";
         sheet.addView(Ui.text(act, bet.proposition.isEmpty() ? "Bet" : bet.proposition, Design.TEXT(), 15, true));
-        sheet.addView(Ui.text(act, "They bet " + Num.plain(theirBet) + " " + theirSide, Design.DIM(), 12, false));
+        sheet.addView(Ui.text(act, "They bet " + Num.plain(theirStake) + " " + theirSide
+                + " · you'd bet " + mySideWord, Design.DIM(), 12, false));
 
-        // center readout
-        TextView lbl = Ui.label(act, "Your stake");
-        Ui.topMargin(lbl, Ui.dp(act, 16)); sheet.addView(lbl);
-        int mySide = bet.side == 1 ? 0 : 1;
+        modeLabel = Ui.label(act, "");
+        Ui.topMargin(modeLabel, Ui.dp(act, 16)); sheet.addView(modeLabel);
         valLabel = Ui.money(act, "", Design.sideColor(mySide), 34, true);
         sheet.addView(valLabel);
         escrowLabel = Ui.money(act, "", Design.GOLD(), 12, false);
         sheet.addView(escrowLabel);
 
-        // slider
         slider = new SeekBar(act);
         slider.setMax(STEPS);
-        slider.setProgress(STEPS); // start at full ask
+        slider.setProgress(STEPS);   // start at the full ask (Accept)
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         slp.topMargin = Ui.dp(act, 16);
@@ -105,12 +119,11 @@ public class CounterSheet extends Dialog {
         sheet.addView(slider);
 
         LinearLayout ends = Ui.row(act);
-        ends.addView(Ui.text(act, "counter", Design.DIM2(), 10, false), Ui.weight(1));
-        TextView takeEnd = Ui.text(act, "take " + Num.plain(theirAsk), Design.DIM2(), 10, false);
+        ends.addView(Ui.text(act, "← counter (offer less)", Design.DIM2(), 10, false), Ui.weight(1));
+        TextView takeEnd = Ui.text(act, "accept " + Num.plain(fullAsk), Design.DIM2(), 10, false);
         ends.addView(takeEnd);
         sheet.addView(ends);
 
-        // terms
         LinearLayout terms = Ui.col(act);
         terms.setBackground(Design.roundBg(act, Design.SURFACE2(), 14));
         int tp = Ui.dp(act, 12); terms.setPadding(tp, tp, tp, tp);
@@ -126,61 +139,66 @@ public class CounterSheet extends Dialog {
         Ui.topMargin(status, Ui.dp(act, 10)); sheet.addView(status);
 
         cta = Ui.button(act, "", Design.ACCENT(), Design.ON_ACCENT(), true);
-        Ui.topMargin(cta, Ui.dp(act, 8));
+        Ui.topMargin(cta, Ui.dp(act, 10));
         cta.setOnClickListener(v -> submit());
         sheet.addView(cta);
-        return sheet;
+
+        TextView close = Ui.text(act, "Close", Design.DIM(), 13, true);
+        close.setGravity(Gravity.CENTER);
+        close.setPadding(0, Ui.dp(act, 14), 0, 0);
+        close.setOnClickListener(v -> dismiss());
+        sheet.addView(close);
+
+        return scroll;
     }
 
-    /** Current slider value in displayed-stake units (0.01 floor .. theirAsk). */
-    private BigDecimal sliderValue() {
+    /** Slider value = my stake, from the 0.01 grain floor up to the full ask. */
+    private BigDecimal myStake() {
         double frac = slider.getProgress() / (double) STEPS;
-        BigDecimal v = theirAsk.multiply(new BigDecimal(frac), Num.MC);
+        BigDecimal v = fullAsk.multiply(new BigDecimal(frac), Num.MC);
         if (v.compareTo(Num.GRAIN) < 0) v = Num.GRAIN;
-        // snap to 0.01 grain
         return v.divide(Num.GRAIN, 0, java.math.RoundingMode.HALF_UP).multiply(Num.GRAIN);
     }
 
-    private boolean isFullAsk(BigDecimal v) {
-        return v.subtract(theirAsk).abs().compareTo(new BigDecimal("0.01")) < 0;
+    private boolean isAccept(BigDecimal stake) {
+        return stake.subtract(fullAsk).abs().compareTo(new BigDecimal("0.01")) < 0;
     }
 
     private void update() {
-        BigDecimal myWant = sliderValue();
-        BigDecimal myStake = theirBet;                 // my stake is fixed at their bet
-        boolean full = isFullAsk(myWant);
-        int mySide = bet.side == 1 ? 0 : 1;
-        String mySideWord = mySide == 1 ? "TRUE" : "FALSE";
+        BigDecimal stake = myStake();
+        boolean accept = isAccept(stake);
+        BigDecimal lock = Num.lock(stake);
 
-        valLabel.setText(Num.plain(myStake));
-        BigDecimal lock = Num.lock(myStake);
+        modeLabel.setText(accept ? "Accept — your stake" : "Counter — your stake");
+        valLabel.setText(Num.plain(stake));
         escrowLabel.setText("+ 25% escrow → locks " + Num.plain(lock));
-        termsWin.setText("Win " + mySideWord + "  +" + Num.plain(myWant));
-        termsLose.setText("Lose  -" + Num.plain(myStake));
-        cta.setText(full ? "TAKE — LOCK " + Num.plain(lock)
-                         : "COUNTER — LOCK " + Num.plain(lock));
+        termsWin.setText("Win  +" + Num.plain(theirStake));
+        termsLose.setText("Lose  −" + Num.plain(stake));
+        cta.setText(accept
+                ? "ACCEPT — lock " + Num.plain(lock)
+                : "COUNTER — lock " + Num.plain(lock));
     }
 
     private void submit() {
-        BigDecimal myWant = sliderValue();
-        boolean full = isFullAsk(myWant);
+        final BigDecimal stake = myStake();
+        boolean accept = isAccept(stake);
         cta.setEnabled(false);
         status.setTextColor(Design.DIM());
-        status.setText(full ? "Taking bet…" : "Posting counter…");
+        status.setText(accept ? "Accepting…" : "Posting counter…");
 
-        if (full) {
+        if (accept) {
             act.txn.fill(bet, new OpenlyTxn.Done() {
-                public void ok() { act.toast("Bet taken — confirming"); act.refreshCurrent(); dismiss(); }
-                public void fail(String m) { statusFail("Fill failed: " + m); }
+                public void ok() { act.toast("Accepted — confirming on-chain"); act.refreshCurrent(); dismiss(); }
+                public void fail(String m) { statusFail("Accept failed: " + m); }
             });
         } else {
-            int mySide = bet.side == 1 ? 0 : 1;
             act.node().cmd("random size:32", new NodeApi.Cb() {
                 public void onResult(JSONObject r) {
                     String nonce = r.optJSONObject("response") != null
                             ? r.optJSONObject("response").optString("random", "") : "";
                     if (nonce.isEmpty()) { statusFail("nonce failed"); return; }
-                    act.txn.post(bet.proposition, mySide, theirBet, myWant,
+                    // Counter: bet my side, staking `stake`, wanting the poster's stake.
+                    act.txn.post(bet.proposition, mySide, stake, theirStake,
                             bet.arbpk, bet.arbaddr, bet.timeout, bet.settleblock, nonce,
                             new OpenlyTxn.Done() {
                                 public void ok() { act.toast("Counter posted"); act.refreshCurrent(); dismiss(); }
@@ -196,5 +214,6 @@ public class CounterSheet extends Dialog {
         status.setTextColor(Design.NEG());
         status.setText(m);
         cta.setEnabled(true);
+        act.toast(m);
     }
 }

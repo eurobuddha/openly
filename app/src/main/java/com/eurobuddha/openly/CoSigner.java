@@ -101,7 +101,9 @@ public class CoSigner {
     private void signGatedPost(String txid, String myBetPk, Done done) {
         SignGate.submit(gate -> {
             List<String> cmds = new ArrayList<>();
-            cmds.add("txnsign id:" + txid + " publickey:" + myBetPk);   // check 5: explicit key
+            // Validation (check 1) already proved the sole input is the contract coin, so auto-sign
+            // cannot conscript other wallet coins — it signs only what that coin's script needs.
+            cmds.add("txnsign id:" + txid + " publickey:auto");
             cmds.add("txnbasics id:" + txid);
             CmdChain.run(node, cmds, "txndelete id:" + txid, new CmdChain.Done() {
                 public void ok(JSONObject last) {
