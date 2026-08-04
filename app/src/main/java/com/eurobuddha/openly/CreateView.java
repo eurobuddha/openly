@@ -23,7 +23,7 @@ import com.eurobuddha.comms.NodeApi;
  */
 public class CreateView extends BaseView {
 
-    private EditText propIn, stakeIn, wantIn, arbPkIn, arbAddrIn, arbCommsIn;
+    private EditText propIn, stakeIn, wantIn, arbPkIn, arbAddrIn;
     private int side = 1;
     private TextView sideTrue, sideFalse, escrowCap, oddsCap, statusTv;
     private TextView cta;
@@ -102,8 +102,6 @@ public class CreateView extends BaseView {
         field(col, "Arbiter public key", arbPkIn);
         arbAddrIn = input("0x…", InputType.TYPE_CLASS_TEXT);
         field(col, "Arbiter address", arbAddrIn);
-        arbCommsIn = input("0x… (optional)", InputType.TYPE_CLASS_TEXT);
-        field(col, "Arbiter comms id", arbCommsIn);
 
         TextWatcher w = new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
@@ -169,7 +167,6 @@ public class CreateView extends BaseView {
         BigDecimal stake = parse(stakeIn), want = parse(wantIn);
         String arbpk = arbPkIn.getText().toString().trim();
         String arbaddr = arbAddrIn.getText().toString().trim();
-        String arbcomms = arbCommsIn.getText().toString().trim();
         if (prop.isEmpty()) { fail("Enter a proposition"); return; }
         if (!Num.validStake(stake)) { fail("Stake must be ≥ 0.1 in 0.01 steps"); return; }
         if (!Num.validStake(want)) { fail("They-must-stake must be ≥ 0.1 in 0.01 steps"); return; }
@@ -185,7 +182,7 @@ public class CreateView extends BaseView {
                 String nonce = r.optJSONObject("response") != null
                         ? r.optJSONObject("response").optString("random", "") : "";
                 if (nonce.isEmpty()) { fail("nonce failed"); cta.setEnabled(true); return; }
-                act.txn.post(prop, side, fStake, fWant, arbpk, arbaddr, arbcomms, timeout, 0, nonce,
+                act.txn.post(prop, side, fStake, fWant, arbpk, arbaddr, timeout, 0, nonce,
                         new OpenlyTxn.Done() {
                             public void ok() {
                                 statusTv.setTextColor(Design.TRUE_C());

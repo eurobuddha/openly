@@ -98,21 +98,21 @@ public class SettleEngine {
                 m.winnerAmt, m.loserAmt, "RECEIVED", now);
     }
 
-    /** I disagree: reject to the counterparty and raise a DISPUTE to the arbiter's commsid. */
+    /**
+     * I disagree: tell the counterparty (comms, legitimate) and raise the dispute ON-CHAIN to the
+     * arbiter's payout address. No arbiter comms id — the arbiter finds it by scanning their address.
+     */
     public void dispute(Bet bet, Cb cb) {
         long now = System.currentTimeMillis();
         db.setProposalState(bet.nonce, "IN", "REJECTED", now);
-        // notify counterparty (best-effort)
+        // notify counterparty (best-effort comms — this channel is legitimate)
         OpenlyMessage rej = base(bet, OpenlyMessage.SETTLE_REJECT, theirCommsId(bet), now);
         comms.send(rej.to, rej, noop());
-        // raise dispute to arbiter
-        if (bet.arbcommsid != null && !bet.arbcommsid.isEmpty()) {
-            OpenlyMessage d = base(bet, OpenlyMessage.DISPUTE, bet.arbcommsid, now);
-            comms.send(d.to, d, new CommsTransport.SendCb() {
-                public void onSent(String t) { cb.ok(); }
-                public void onFailed(String e) { cb.fail("dispute send: " + e); }
-            });
-        } else cb.ok();
+        // raise dispute on-chain to the arbiter's port-3 address
+        txn.raiseDispute(bet, new OpenlyTxn.Done() {
+            public void ok() { cb.ok(); }
+            public void fail(String m) { cb.fail("dispute: " + m); }
+        });
     }
 
     private OpenlyMessage base(Bet bet, String type, String to, long now) {

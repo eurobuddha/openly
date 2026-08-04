@@ -39,8 +39,13 @@ public class AutoProcessor {
     public boolean isFlagged(String nonce) { return wantTimeout.getBoolean(nonce, false); }
     public void flagTimeout(String nonce, boolean on) { wantTimeout.edit().putBoolean(nonce, on).apply(); }
 
+    private int busySince = 0;   // tip block when busy was set — watchdog against a hung node callback
+
     /** Called after each board scan. */
     public void process(int tipBlock) {
+        // Watchdog: if an in-flight op hasn't completed within a few blocks (its Done never fired
+        // because the node hung), release the latch so processing resumes.
+        if (busy && tipBlock - busySince >= REPOST_AFTER + 2) busy = false;
         if (busy) return;
         // prune cooldown to coins we still see
         Set<String> live = new java.util.HashSet<>();
@@ -75,7 +80,7 @@ public class AutoProcessor {
     }
 
     private void doRefresh(Bet b, String pk, int tip) {
-        busy = true;
+        busy = true; busySince = tip;
         postedAt.put(b.coinid, tip);
         txn.refresh(b, pk, new OpenlyTxn.Done() {
             public void ok() { busy = false; }
@@ -84,7 +89,7 @@ public class AutoProcessor {
     }
 
     private void doTimeout(Bet b, int tip) {
-        busy = true;
+        busy = true; busySince = tip;
         postedAt.put(b.coinid, tip);
         txn.timeout(b, new OpenlyTxn.Done() {
             public void ok() { busy = false; }

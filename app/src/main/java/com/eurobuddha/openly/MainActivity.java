@@ -251,8 +251,12 @@ public class MainActivity extends AppCompatActivity {
                     currentBlock = r.getJSONObject("response").getInt("block");
                     updateHeaderStat();
                 } catch (Exception ignored) {}
-                if (scanner != null) scanner.scan(currentBlock);
+                if (scanner != null) {
+                    scanner.scan(currentBlock);
+                    if (identity != null && identity.ready()) scanner.scanDisputes(identity.hexaddr);
+                }
                 if (comms != null && comms.ready()) comms.scan(currentBlock);
+                if (txn != null) txn.refreshInflight();
                 for (int i = 0; i < pagerAdapter.getCount(); i++) pagerAdapter.viewAt(i).onNewBlock();
             }
             public void onError(String e) {}

@@ -19,7 +19,13 @@ public class OpenlyDb extends SQLiteOpenHelper {
     private static final String NAME = "openly.db";
     private static final int VERSION = 1;
 
-    public OpenlyDb(Context c) { super(c, NAME, null, VERSION); }
+    public OpenlyDb(Context c) {
+        super(c, NAME, null, VERSION);
+        // WAL: the comms router must get a synchronous "is-new" answer from insertMessageIfNew (a
+        // false return makes the scanner re-process the coin every pass), so the dedup insert stays
+        // on the calling thread — WAL keeps that write cheap and non-blocking of concurrent reads.
+        setWriteAheadLoggingEnabled(true);
+    }
 
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE messages (" +

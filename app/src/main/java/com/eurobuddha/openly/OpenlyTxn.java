@@ -44,7 +44,7 @@ public class OpenlyTxn {
      * lock = stake × 1.25 is sent as @AMOUNT; wantstake is the counter's required lock.
      */
     public void post(String proposition, int side, BigDecimal stake, BigDecimal wantstake,
-                     String arbpk, String arbaddr, String arbCommsId, int timeout, int settleblock,
+                     String arbpk, String arbaddr, int timeout, int settleblock,
                      String nonce, Done done) {
         BigDecimal lock = Num.lock(stake);
         BigDecimal wlock = Num.lock(wantstake);
@@ -61,7 +61,9 @@ public class OpenlyTxn {
             st.put("8", String.valueOf(settleblock));
             st.put("9", nonce);
             st.put("10", id.commsId);
-            st.put("11", arbCommsId == null || arbCommsId.isEmpty() ? id.commsId : arbCommsId);
+            // Port 11 is unused by the contract. Disputes reach the arbiter ON-CHAIN (a marker coin to
+            // their port-3 payout address), so there is no separate arbiter comms id to carry.
+            st.put("11", "0");
             st.put("12", "0");
         } catch (Exception e) { done.fail("state build failed"); return; }
 
@@ -72,6 +74,34 @@ public class OpenlyTxn {
                 gate.free();
                 boolean okStatus = r.optBoolean("status", false) || r.optBoolean("pending", false);
                 if (okStatus) done.ok(); else done.fail(r.optString("error", "post failed"));
+            }
+            public void onError(String e) { gate.free(); done.fail(e); }
+        }));
+    }
+
+    /** Dispute-marker state ports (on a 1-nano coin to the arbiter's payout address). */
+    public static final int DISPUTE_NONCE_PORT = 50;
+    public static final int DISPUTE_TAG_PORT = 51;
+    public static final String DISPUTE_TAG = Util.strToHex("DISPUTE");
+
+    // ---------------------------------------------------------------- DISPUTE (on-chain, to arbiter)
+    /**
+     * Raise a dispute the arbiter can find by scanning their own payout address (port 3) — no comms
+     * id needed. A 1-nano coin to that address carries the bet nonce (port 50) + a DISPUTE tag
+     * (port 51). The arbiter's app matches the nonce to a matched bet where they are the arbiter.
+     */
+    public void raiseDispute(Bet bet, Done done) {
+        JSONObject st = new JSONObject();
+        try {
+            st.put(String.valueOf(DISPUTE_NONCE_PORT), bet.nonce);
+            st.put(String.valueOf(DISPUTE_TAG_PORT), DISPUTE_TAG);
+        } catch (Exception e) { done.fail("marker build failed"); return; }
+        final String cmd = "send amount:0.000000001 address:" + bet.arbaddr + " state:" + st.toString();
+        SignGate.submit(gate -> node.cmd(cmd, new NodeApi.Cb() {
+            public void onResult(JSONObject r) {
+                gate.free();
+                if (r.optBoolean("status", false) || r.optBoolean("pending", false)) done.ok();
+                else done.fail(r.optString("error", "dispute post failed"));
             }
             public void onError(String e) { gate.free(); done.fail(e); }
         }));
@@ -193,8 +223,24 @@ public class OpenlyTxn {
         return "txnstate id:" + txid + " port:" + port + " value:" + val;
     }
 
-    /** Prune inflight reservations to coins still present (called after a confirmation scan). */
-    public void pruneInflight(Set<String> present) { inflightCoins.retainAll(present); }
+    /** Prune inflight reservations to coins still sendable (drops spent ones). Called each block. */
+    public void pruneInflight(Set<String> stillSendable) { inflightCoins.retainAll(stillSendable); }
+
+    /** Query sendable coinids and prune inflight to them (a spent funding coin is released). */
+    public void refreshInflight() {
+        node.cmd("coins sendable:true tokenid:0x00", new NodeApi.Cb() {
+            public void onResult(JSONObject r) {
+                java.util.Set<String> present = ConcurrentHashMap.newKeySet();
+                JSONArray arr = r.optJSONArray("response");
+                if (arr != null) for (int i = 0; i < arr.length(); i++) {
+                    JSONObject c = arr.optJSONObject(i);
+                    if (c != null) present.add(c.optString("coinid", ""));
+                }
+                if (!inflightCoins.isEmpty()) pruneInflight(present);
+            }
+            public void onError(String e) {}
+        });
+    }
 
     // ---------------------------------------------------------------- TIMEOUT refund (MAST leaf)
     /**
@@ -325,6 +371,13 @@ public class OpenlyTxn {
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(loserAmt)
                 + " address:" + loserAddr + " storestate:false");
         cmds.add("txnstate id:" + txid + " port:20 value:" + outcome);
+        // VOID (outcome 2) leaves the main script's self-settle branch (guarded o LTE 1) and resolves
+        // via the MAST void leaf — its proof must be attached, and it travels with txnexport to the
+        // co-signer. TRUE/FALSE (0/1) settle on the main branch, no proof needed.
+        if (outcome == 2) {
+            cmds.add("txnscript id:" + txid + " scripts:"
+                    + mastArg(OpenlyContract.LEAF_VOID, OpenlyContract.PROOF_VOID));
+        }
         cmds.add("txnsign id:" + txid + " publickey:" + myBetPk);
         SignGate.submit(gate -> CmdChain.run(node, cmds, "txndelete id:" + txid, new CmdChain.Done() {
             public void ok(JSONObject last) {

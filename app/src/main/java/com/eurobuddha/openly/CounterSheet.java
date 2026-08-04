@@ -181,7 +181,7 @@ public class CounterSheet extends Dialog {
                             ? r.optJSONObject("response").optString("random", "") : "";
                     if (nonce.isEmpty()) { statusFail("nonce failed"); return; }
                     act.txn.post(bet.proposition, mySide, theirBet, myWant,
-                            bet.arbpk, bet.arbaddr, bet.arbcommsid, bet.timeout, bet.settleblock, nonce,
+                            bet.arbpk, bet.arbaddr, bet.timeout, bet.settleblock, nonce,
                             new OpenlyTxn.Done() {
                                 public void ok() { act.toast("Counter posted"); act.refreshCurrent(); dismiss(); }
                                 public void fail(String m) { statusFail("Counter failed: " + m); }

@@ -57,6 +57,6 @@ dependencies {
     // Client-side end-to-end crypto for comms: X25519 sealed box + Ed25519 (libsodium).
     // The node has no Maxima over IPC, so all encryption/signing happens in-app; the node
     // only carries the sealed blob in coin state. Keys derive from the Minima seed.
-    implementation 'com.goterl:lazysodium-android:5.1.0@aar'
-    implementation 'net.java.dev.jna:jna:5.14.0@aar'   // 16 KB-page-aligned libjnidispatch.so
+    implementation 'com.goterl:lazysodium-android:5.2.0@aar'  // 16 KB-aligned libsodium.so (all ABIs)
+    implementation 'net.java.dev.jna:jna:5.14.0@aar'          // 16 KB-aligned libjnidispatch.so
 }

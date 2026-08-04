@@ -75,27 +75,27 @@ public final class Util {
         return s.isEmpty() ? "0" : s;
     }
 
-    /** ASCII string → 0x-prefixed uppercase hex (for state ports: proposition, comms ids). */
+    /** String → 0x-prefixed uppercase hex of its UTF-8 bytes (proposition text, etc.). Lossless for
+     *  any Unicode; post and fill both use this, so the on-chain hex round-trips and SAMESTATE holds. */
     public static String strToHex(String s) {
         if (s == null) return "0x";
+        byte[] bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         StringBuilder b = new StringBuilder("0x");
-        for (int i = 0; i < s.length(); i++) {
-            b.append(String.format("%02X", s.charAt(i) & 0xFF));
-        }
+        for (byte x : bytes) b.append(String.format("%02X", x & 0xFF));
         return b.toString();
     }
 
-    /** 0x-hex (with or without prefix) → ASCII string. Returns "" on malformed input. */
+    /** 0x-hex (with or without prefix) → UTF-8 string. Returns "" on malformed input. */
     public static String hexToStr(String hex) {
         if (hex == null || hex.isEmpty()) return "";
         String h = hex.startsWith("0x") || hex.startsWith("0X") ? hex.substring(2) : hex;
         if ((h.length() & 1) != 0) return "";
         try {
-            StringBuilder b = new StringBuilder();
-            for (int i = 0; i < h.length(); i += 2) {
-                b.append((char) Integer.parseInt(h.substring(i, i + 2), 16));
+            byte[] bytes = new byte[h.length() / 2];
+            for (int i = 0; i < bytes.length; i++) {
+                bytes[i] = (byte) Integer.parseInt(h.substring(i * 2, i * 2 + 2), 16);
             }
-            return b.toString();
+            return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
         } catch (NumberFormatException e) {
             return "";
         }

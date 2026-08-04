@@ -42,10 +42,18 @@ public class ArbiterView extends BaseView {
         list.removeAllViews();
         list.addView(identityCard());
 
-        List<Bet> cases = new ArrayList<>();
-        for (Bet b : act.scanner.matched) if (b.isMyArb) cases.add(b);
+        // Only DISPUTED cases get resolve buttons — resolving a bet the parties would settle for free
+        // would wrongly take the 10% fee + the loser's escrow. Non-disputed matched bets I arbitrate
+        // are shown as monitored (no action).
+        List<Bet> disputed = new ArrayList<>();
+        List<Bet> monitoring = new ArrayList<>();
+        for (Bet b : act.scanner.matched) {
+            if (!b.isMyArb) continue;
+            if (act.scanner.disputedNonces.contains(b.nonce)) disputed.add(b);
+            else monitoring.add(b);
+        }
 
-        if (cases.isEmpty()) {
+        if (disputed.isEmpty() && monitoring.isEmpty()) {
             TextView e = Ui.text(act, "No cases. Share your identity to be named arbiter.",
                     Design.DIM(), 13, false);
             Ui.topMargin(e, Ui.dp(act, 16));
@@ -53,10 +61,18 @@ public class ArbiterView extends BaseView {
             list.addView(e);
             return;
         }
-        TextView h = Ui.label(act, "Awaiting your decision");
-        Ui.topMargin(h, Ui.dp(act, 12));
-        list.addView(h);
-        for (Bet b : cases) list.addView(caseCard(b));
+        if (!disputed.isEmpty()) {
+            TextView h = Ui.label(act, "Disputed — awaiting your decision");
+            Ui.topMargin(h, Ui.dp(act, 12));
+            list.addView(h);
+            for (Bet b : disputed) list.addView(caseCard(b, true));
+        }
+        if (!monitoring.isEmpty()) {
+            TextView h = Ui.label(act, "Monitoring (no dispute)");
+            Ui.topMargin(h, Ui.dp(act, 12));
+            list.addView(h);
+            for (Bet b : monitoring) list.addView(caseCard(b, false));
+        }
     }
 
     private View identityCard() {
@@ -67,12 +83,10 @@ public class ArbiterView extends BaseView {
         card.addView(cap("Anyone can name you arbiter. You earn 10% of pots you resolve."));
         card.addView(kv("Public key", act.identity.pubkey));
         card.addView(kv("Address", act.identity.hexaddr));
-        card.addView(kv("Comms id", act.identity.commsId));
         TextView copy = Ui.button(act, "Copy identity", Design.SURFACE2(), Design.TEXT(), false);
         Ui.topMargin(copy, Ui.dp(act, 12));
         copy.setOnClickListener(v -> {
-            String blob = "pk=" + act.identity.pubkey + "\naddr=" + act.identity.hexaddr
-                    + "\ncomms=" + act.identity.commsId;
+            String blob = "pk=" + act.identity.pubkey + "\naddr=" + act.identity.hexaddr;
             ClipboardManager cm = (ClipboardManager) act.getSystemService(Context.CLIPBOARD_SERVICE);
             cm.setPrimaryClip(ClipData.newPlainText("openly-arbiter", blob));
             act.toast("Arbiter identity copied");
@@ -81,9 +95,11 @@ public class ArbiterView extends BaseView {
         return card;
     }
 
-    private View caseCard(Bet b) {
+    private View caseCard(Bet b, boolean disputed) {
         LinearLayout card = Ui.card(act);
-        card.addView(Ui.chip(act, "AWAITING DECISION", Design.GOLD(), Design.GOLD_SOFT()));
+        card.addView(disputed
+                ? Ui.chip(act, "DISPUTED — AWAITING DECISION", Design.NEG(), Design.NEG_SOFT())
+                : Ui.chip(act, "MONITORING", Design.DIM(), Design.SURFACE2()));
         TextView q = Ui.text(act, b.proposition.isEmpty() ? "Bet" : b.proposition, Design.TEXT(), 15, true);
         Ui.topMargin(q, Ui.dp(act, 8));
         card.addView(q);
@@ -97,6 +113,15 @@ public class ArbiterView extends BaseView {
         sides.addView(Ui.money(act, "FALSE " + Num.plain(b.side == 0 ? b.ownerBet() : b.counterBet()),
                 Design.FALSE_C(), 13, false), Ui.weight(1));
         card.addView(sides);
+
+        if (!disputed) {
+            TextView note = Ui.text(act, "Both parties can still self-settle for free — nothing for you to do.",
+                    Design.DIM(), 11, false);
+            Ui.topMargin(note, Ui.dp(act, 8));
+            card.addView(note);
+            return card;
+        }
+
         TextView feeTv = Ui.money(act, "Your fee 10% = " + Num.plain(fee), Design.GOLD(), 12, false);
         Ui.topMargin(feeTv, Ui.dp(act, 6));
         card.addView(feeTv);

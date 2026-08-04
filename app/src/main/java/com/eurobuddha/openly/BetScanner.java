@@ -28,6 +28,8 @@ public class BetScanner {
     private final Set<String> myKeys = new HashSet<>();
     public final List<Bet> open = new ArrayList<>();
     public final List<Bet> matched = new ArrayList<>();
+    /** Nonces flagged disputed via an on-chain marker at my payout address (I am the arbiter). */
+    public final Set<String> disputedNonces = new HashSet<>();
     private int tipBlock = 0;
 
     public BetScanner(NodeApi node, Listener listener) {
@@ -80,6 +82,33 @@ public class BetScanner {
                 if (listener != null) listener.onScanned();
             }
             public void onError(String e) { if (listener != null) listener.onScanned(); }
+        });
+    }
+
+    /**
+     * Scan my own payout address for on-chain dispute markers (1-nano coins carrying a bet nonce in
+     * port 50). Populates {@link #disputedNonces} so ArbiterView can show which cases were disputed
+     * — the arbiter must NOT resolve a matched bet unless a party actually disputed it.
+     */
+    public void scanDisputes(String myPayoutAddr) {
+        if (myPayoutAddr == null || myPayoutAddr.isEmpty()) return;
+        node.cmd("coins address:" + myPayoutAddr, new NodeApi.Cb() {
+            public void onResult(JSONObject r) {
+                Set<String> found = new HashSet<>();
+                JSONArray arr = r.optJSONArray("response");
+                if (arr != null) {
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject cj = arr.optJSONObject(i);
+                        if (cj == null || cj.optBoolean("spent", false)) continue;
+                        BetCoin bc = BetCoin.from(cj);
+                        String nonce = bc.at(OpenlyTxn.DISPUTE_NONCE_PORT);
+                        if (!nonce.isEmpty()) found.add(nonce);
+                    }
+                }
+                disputedNonces.clear();
+                disputedNonces.addAll(found);
+            }
+            public void onError(String e) {}
         });
     }
 
