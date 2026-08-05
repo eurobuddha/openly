@@ -27,8 +27,22 @@ public final class OpenlyContract {
     public static final String ROOT =
         "0x265E914D6805AF4047CD83897AB2CF5E0585D648EE5B407AF1484DC00D39CDA6";
 
-    // Shared comms channel address = hex("OPENLY")
+    // Shared comms channel address = hex("OPENLY") — small/rare messages (dispute, notify).
     public static final String MAIL_ADDR = "0x4F50454E4C59";
+
+    /**
+     * Per-bet SETTLEMENT mailbox: the bet nonce itself (a 32-byte value both parties read from the
+     * matched coin's port 9). The heavy signed settlement blob is posted to THIS address, not the
+     * shared OPENLY channel — so the counterparty reads `coins address:<settleAddr>` and finds only
+     * the 1-2 proposal coins for this bet, scannable at any depth with no shared-address bloat or
+     * IPC-limit risk (mirrors PocketFS's per-site addressing). The blob is still sealed to the
+     * counterparty's box key, and the nonce is already public on-chain, so using it as an address
+     * leaks nothing.
+     */
+    public static String settleAddr(String nonce) {
+        if (nonce == null || nonce.isEmpty()) return MAIL_ADDR;
+        return nonce.startsWith("0x") || nonce.startsWith("0X") ? nonce : "0x" + nonce;
+    }
 
     // Main script (clean form, 1177 chars — under the ~1200 KISS limit).
     public static final String SCRIPT =

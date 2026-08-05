@@ -66,6 +66,19 @@ public class Bet {
         return b;
     }
 
+    /**
+     * A real bet always pins an owner pubkey (port 0) and a 32-byte nonce (port 9) at post time.
+     * A coin at the contract address with neither is a state-less orphan — e.g. a mis-built cancel
+     * output that landed back at the contract with empty state. Such a coin is UNSPENDABLE (the
+     * script errors on `PREVSTATE Missing: 0` at instruction 1, so no path can ever authorize it),
+     * yet it would otherwise render as a phantom "Untitled / TRUE / bet X / win 0" card that no one
+     * can cancel. The scanner drops these so they never masquerade as bets.
+     */
+    public boolean isWellFormed() {
+        return ownerpk != null && !ownerpk.isEmpty()
+                && nonce != null && !nonce.isEmpty();
+    }
+
     /** Owner's displayed stake (not lock). */
     public BigDecimal ownerBet() {
         BigDecimal lock = phase == 1 && ownerstake.signum() > 0 ? ownerstake : amount;

@@ -163,7 +163,6 @@ public class MainActivity extends AppCompatActivity {
         boolean fresh = db.insertMessageIfNew(m, true);
         if (fresh) {
             if (OpenlyMessage.SETTLE_PROPOSE.equals(m.type)) settle.onInboundPropose(m);
-            else if (OpenlyMessage.SETTLE_TXN.equals(m.type)) settle.onInboundChunk(m);
             ui.post(this::refreshCurrent);
         }
         return fresh;
@@ -238,10 +237,96 @@ public class MainActivity extends AppCompatActivity {
         if (pager != null) pager.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
     }
 
+    // coinids already auto-cancelled as superseded, so we never re-issue a cancel for the same coin.
+    private final java.util.Set<String> autoCancelled = new java.util.HashSet<>();
+
+    private long lastSettleScan = 0;
+
     private void onScanned() {
         if (auto != null) auto.process(currentBlock);
+        autoCancelSuperseded();
+        scanPendingSettlements();
+        detectSettlements();
         BaseView v = pagerAdapter.viewAt(pager.getCurrentItem());
         v.refresh();
+    }
+
+    // ---- settlement payoff reveal ----
+    private final java.util.Map<String, Bet> settleWatch = new java.util.HashMap<>();
+    private final java.util.Map<String, Integer> settleOutcome = new java.util.HashMap<>();
+    private final java.util.Set<String> settleShown = new java.util.HashSet<>();
+
+    /** Remember an outcome I declared, so when this matched bet later settles on-chain I reveal the result. */
+    public void watchSettlement(Bet b, int outcome) {
+        if (b == null || b.nonce == null) return;
+        settleWatch.put(b.nonce, b);
+        settleOutcome.put(b.nonce, outcome);
+    }
+
+    /** I just co-signed (Agreed): reveal the payoff immediately (still confirming) and suppress the dup. */
+    public void onSettleAgreed(Bet b, int outcome) {
+        if (b == null || b.nonce == null) return;
+        settleShown.add(b.nonce);
+        new SettleResult(this, b, outcome, false).show();
+    }
+
+    /** A watched matched bet has left the board (coin spent) → it settled: reveal the payoff once. */
+    private void detectSettlements() {
+        if (settleWatch.isEmpty() || scanner == null) return;
+        java.util.Set<String> live = new java.util.HashSet<>();
+        for (Bet b : scanner.matched) if (b.nonce != null) live.add(b.nonce);
+        java.util.Iterator<String> it = settleWatch.keySet().iterator();
+        while (it.hasNext()) {
+            String nonce = it.next();
+            if (live.contains(nonce)) continue;                 // still matched — not settled yet
+            Bet b = settleWatch.get(nonce);
+            Integer o = settleOutcome.get(nonce);
+            if (b != null && o != null && settleShown.add(nonce)) new SettleResult(this, b, o, true).show();
+            it.remove();
+            settleOutcome.remove(nonce);
+        }
+    }
+
+    /**
+     * For every matched bet I'm party to that has no received settlement proposal yet, read its per-bet
+     * settlement mailbox ({@link OpenlyContract#settleAddr}). This is the reliable receive path: only
+     * that bet's 1-2 proposal coins live there, so it finds the counterparty's proposal regardless of
+     * how many blocks ago it landed — unlike the bounded shared-channel scan. Throttled.
+     */
+    private void scanPendingSettlements() {
+        if (comms == null || !comms.ready() || scanner == null) return;
+        long now = System.currentTimeMillis();
+        if (now - lastSettleScan < 8000) return;
+        lastSettleScan = now;
+        for (Bet b : scanner.matched) {
+            if (!(b.isMine || b.isMyCounter)) continue;
+            if (db.inboundProposal(b.nonce) != null) continue;   // already received + verified
+            comms.scanSettleAddress(OpenlyContract.settleAddr(b.nonce));
+        }
+    }
+
+    /**
+     * "Taken → just live": once I'm party to a LIVE (matched) bet on a proposition, my OWN leftover
+     * OPEN bets on that same proposition are cancelled automatically and their locked funds returned.
+     * Only my own bets (I can sign the owner-cancel), once per coin, hidden from the board immediately.
+     */
+    private void autoCancelSuperseded() {
+        if (scanner.matched.isEmpty() || scanner.open.isEmpty()) return;
+        java.util.Set<String> liveProps = new java.util.HashSet<>();
+        for (Bet b : scanner.matched)
+            if ((b.isMine || b.isMyCounter) && b.proposition != null && !b.proposition.isEmpty())
+                liveProps.add(b.proposition);
+        if (liveProps.isEmpty()) return;
+        for (final Bet o : scanner.open) {
+            if (!o.isMine || o.proposition == null || !liveProps.contains(o.proposition)) continue;
+            if (!autoCancelled.add(o.coinid)) continue;              // once per coin
+            scanner.markFilled(o.nonce);                             // drop it from the board now too
+            toast("Superseded open bet cancelled — " + Num.plain(o.ownerBet()) + " returning");
+            txn.cancel(o, new OpenlyTxn.Done() {
+                public void ok() { refreshCurrent(); }
+                public void fail(String m) { autoCancelled.remove(o.coinid); toast("Auto-cancel failed: " + m); }
+            });
+        }
     }
 
     private void renderAll() {

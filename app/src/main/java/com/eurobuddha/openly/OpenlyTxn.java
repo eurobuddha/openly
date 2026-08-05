@@ -366,7 +366,12 @@ public class OpenlyTxn {
         final String txid = tag("settle");
         List<String> cmds = new ArrayList<>();
         cmds.add("txncreate id:" + txid);
-        cmds.add("txninput id:" + txid + " coinid:" + bet.coinid);
+        // scriptmmr:true bakes the contract coin's SCRIPT + MMR PROOF into the txn. That proof travels
+        // with txnexport→txnimport intact (verified: basic/scripts/mmrproofs all stay true through the
+        // round-trip), so the co-signer needs NO txnbasics — essential because the co-signer's node only
+        // coinnotify's the shared contract address and can't rebuild the proof itself. This is the
+        // original Wager MDS's working pattern; the earlier proposer-txnbasics clobbered it.
+        cmds.add("txninput id:" + txid + " coinid:" + bet.coinid + " scriptmmr:true");
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(winnerAmt)
                 + " address:" + winnerAddr + " storestate:false");
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(loserAmt)
@@ -379,7 +384,13 @@ public class OpenlyTxn {
             cmds.add("txnscript id:" + txid + " scripts:"
                     + mastArg(OpenlyContract.LEAF_VOID, OpenlyContract.PROOF_VOID));
         }
-        cmds.add("txnsign id:" + txid + " publickey:auto");   // only input is the contract coin
+        // Sign with MY EXPLICIT bet key. `publickey:auto` attaches NOTHING when spending a script
+        // (contract) address — the node can't infer which wallet key controls a script coin — leaving
+        // the settle txn with `signatures:0`, so the contract's `SIGNEDBY(ok) AND SIGNEDBY(ck)` fails.
+        cmds.add("txnsign id:" + txid + " publickey:" + myBetPk);
+        // NO txnbasics here (original Wager MDS pattern): scriptmmr:true already put the proof+script in,
+        // and the explicit-key txnsign serializes into the export. Adding txnbasics would bake a second,
+        // node-relative proof that the co-signer's re-basics then clobbers → mmrproofs:false at settle.
         SignGate.submit(gate -> CmdChain.run(node, cmds, "txndelete id:" + txid, new CmdChain.Done() {
             public void ok(JSONObject last) {
                 node.cmd("txnexport id:" + txid, new NodeApi.Cb() {

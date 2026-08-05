@@ -55,13 +55,19 @@ public final class CommsTransport {
         }
     }
 
-    /** Post a (sealed) blob into state[99] at an address with an amount + tokenid (+ optional extra state). */
+    /** Post a (sealed) blob into state[99] at an address with an amount + tokenid (+ optional extra state).
+     *  storestate:true is REQUIRED: without it the node caps/rejects a large state variable (verified:
+     *  a ~2.4 KB hex state var is refused), which is what forced the old 16-way chunking. With it a
+     *  single coin's state var carries tens of KB (proven to 40 KB hex, node limit ~64 KB) and reads
+     *  back intact via `coins address:` — the same mechanism PocketFS/MinimaFS use to put a whole site
+     *  on one coin. So one sealed settlement blob rides in ONE coin, one send, no chunking. */
     public static void postBlob(NodeApi node, String address, String amount, String tokenid,
                                 String blobHex, JSONObject extraState, SendCb cb) {
         try {
             JSONObject state = extraState != null ? extraState : new JSONObject();
             state.put("99", "0x" + blobHex);   // hex-typed state value, read back the same way
-            post(node, "send amount:" + amount + " address:" + address + " tokenid:" + tokenid + " state:" + state, cb);
+            post(node, "send amount:" + amount + " address:" + address + " tokenid:" + tokenid
+                    + " storestate:true state:" + state, cb);
         } catch (Exception e) {
             cb.onFailed(e.getMessage());
         }

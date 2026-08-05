@@ -149,13 +149,47 @@ public class OpenlyComms {
         return fresh[0];
     }
 
-    /** Seal + send a message to a recipient publicId, behind SignGate (inside CommsTransport). */
+    /** Seal + send a message to a recipient publicId at the SHARED OPENLY channel (small messages). */
     public void send(String toPublicId, OpenlyMessage m, CommsTransport.SendCb cb) {
+        sendTo(OpenlyContract.MAIL_ADDR, toPublicId, m, cb);
+    }
+
+    /** Seal + send to a recipient publicId at a SPECIFIC address — used for per-bet settlement blobs
+     *  (posted to {@link OpenlyContract#settleAddr}) so the receiver reads a private, un-bloated address. */
+    public void sendTo(String address, String toPublicId, OpenlyMessage m, CommsTransport.SendCb cb) {
         if (crypto == null) { cb.onFailed("comms not ready"); return; }
         m.from = myId();
         String blob = crypto.seal(toPublicId, m.toWire());
         if (blob == null) { cb.onFailed("seal failed"); return; }
-        CommsTransport.postBlob(node, OpenlyContract.MAIL_ADDR, CommsTransport.MESSAGE_AMOUNT,
+        CommsTransport.postBlob(node, address, CommsTransport.MESSAGE_AMOUNT,
                 CommsTransport.NATIVE, blob, null, cb);
+    }
+
+    /**
+     * Targeted receive for one bet's settlement mailbox. Reads every coin at {@code address} (the
+     * bet's {@link OpenlyContract#settleAddr}), opens state[99] with my box key, and routes any message
+     * addressed to me — same dedup + sink path as the block scanner. Only the 1-2 proposal coins for
+     * this bet live there, so an unbounded read is safe (no shared-address bloat / IPC-limit risk) and
+     * recovers the proposal no matter how many blocks ago it landed. Idempotent (dedup on randomid).
+     */
+    public void scanSettleAddress(final String address) {
+        if (crypto == null || address == null || address.isEmpty()) return;
+        node.cmd("coinnotify action:add address:" + address, NodeApi.Cb.NOOP);
+        node.cmd("coins address:" + address, new NodeApi.Cb() {
+            public void onResult(JSONObject r) {
+                org.json.JSONArray arr = r.optJSONArray("response");
+                if (arr == null) return;
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject coin = arr.optJSONObject(i);
+                    if (coin == null || coin.optBoolean("spent", false)) continue;
+                    String blob = CommsScanner.statePort(coin, 99);
+                    if (blob == null) continue;
+                    Opened o = crypto.open(blob);
+                    if (o == null || !o.valid) continue;
+                    route(coin.optString("coinid", ""), o, coin);
+                }
+            }
+            public void onError(String e) { Log.d(TAG, "scanSettleAddress err: " + e); }
+        });
     }
 }

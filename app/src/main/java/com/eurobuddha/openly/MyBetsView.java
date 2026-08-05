@@ -123,8 +123,9 @@ public class MyBetsView extends BaseView {
             TextView agree = Ui.button(act, "Agree", Design.TRUE_SOFT(), Design.TRUE_C(), false);
             agree.setOnClickListener(v -> {
                 agree.setEnabled(false);
+                final int agreedOutcome = in.outcome;
                 act.settle.accept(b, new SettleEngine.Cb() {
-                    public void ok() { act.toast("Settled — 0% fee, confirming"); act.refreshCurrent(); }
+                    public void ok() { act.onSettleAgreed(b, agreedOutcome); act.refreshCurrent(); }
                     public void fail(String m) { act.toast("Settle rejected: " + m); agree.setEnabled(true); }
                 });
             });
@@ -192,7 +193,11 @@ public class MyBetsView extends BaseView {
         String word = outcome == 2 ? "VOID" : outcome == 1 ? "TRUE" : "FALSE";
         act.toast("Proposing " + word + "…");
         act.settle.propose(b, outcome, new SettleEngine.Cb() {
-            public void ok() { act.toast("Proposal sent — waiting for counterparty"); act.refreshCurrent(); }
+            public void ok() {
+                act.watchSettlement(b, outcome);   // reveal the payoff when the counterparty settles it
+                act.toast("Proposal sent — waiting for counterparty");
+                act.refreshCurrent();
+            }
             public void fail(String m) { act.toast("Propose failed: " + m); }
         });
     }

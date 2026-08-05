@@ -33,6 +33,11 @@ public class BetScanner {
     private final Set<String> myKeys = new HashSet<>();
     public final List<Bet> open = new ArrayList<>();
     public final List<Bet> matched = new ArrayList<>();
+    // Nonces I have just accepted/filled locally. The fill spends the phase-0 coin, but the chain
+    // still reports it unspent until the fill mines (~1-2 min), so it would otherwise linger in
+    // Markets + My Bets→Open. Suppress those nonces from `open` optimistically until the matching
+    // phase-1 coin actually appears (then the entry self-clears — see scan()).
+    private final Set<String> pendingMatched = new HashSet<>();
     /** Nonces flagged disputed via an on-chain marker at my payout address (I am the arbiter). */
     public final Set<String> disputedNonces = new HashSet<>();
     private int tipBlock = 0;
@@ -87,12 +92,25 @@ public class BetScanner {
                             if (cj == null || cj.optBoolean("spent", false)) continue;
                             BetCoin bc = BetCoin.from(cj);
                             Bet b = Bet.from(bc, myKeys, tipBlock);
+                            if (!b.isWellFormed()) continue;   // skip state-less orphans (unspendable, not real bets)
                             if (b.phase == 0) o.add(b);
                             else if (b.phase == 1) m.add(b);
                         }
                     }
+                    // A LIVE (phase-1) bet supersedes any OPEN (phase-0) coin with the same nonce — a
+                    // taken bet must not also show as open. `matched` nonces confirm a fill landed, so
+                    // clear those from the optimistic set; then drop from `open` anything superseded
+                    // (already matched) or optimistically pending (I just tapped Accept).
+                    Set<String> live = new HashSet<>();
+                    for (Bet b : m) if (b.nonce != null) live.add(b.nonce);
+                    pendingMatched.removeAll(live);            // fill confirmed → stop optimistic hiding
+                    List<Bet> oFiltered = new ArrayList<>(o.size());
+                    for (Bet b : o) {
+                        if (b.nonce != null && (live.contains(b.nonce) || pendingMatched.contains(b.nonce))) continue;
+                        oFiltered.add(b);
+                    }
                     ui.post(() -> {                            // swap + notify on main (cheap)
-                        open.clear(); open.addAll(o);
+                        open.clear(); open.addAll(oFiltered);
                         matched.clear(); matched.addAll(m);
                         scanning = false;
                         if (listener != null) listener.onScanned();
@@ -134,6 +152,9 @@ public class BetScanner {
             public void onError(String e) {}
         });
     }
+
+    /** I just accepted/filled this bet — hide its open coin immediately until the phase-1 coin lands. */
+    public void markFilled(String nonce) { if (nonce != null && !nonce.isEmpty()) pendingMatched.add(nonce); }
 
     public boolean isMyKey(String pk) { return myKeys.contains(pk); }
     public int keyCount() { return myKeys.size(); }

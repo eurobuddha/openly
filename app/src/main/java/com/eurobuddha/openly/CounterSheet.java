@@ -2,10 +2,14 @@ package com.eurobuddha.openly;
 
 import android.app.Dialog;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.InputType;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
@@ -36,7 +40,10 @@ public class CounterSheet extends Dialog {
     private final int mySide;              // opposite of the poster
 
     private SeekBar slider;
-    private TextView valLabel, escrowLabel, termsWin, termsLose, cta, status, modeLabel;
+    private EditText valInput;                 // the big number — now typeable
+    private TextView escrowLabel, termsWin, termsLose, cta, status, modeLabel;
+    private BigDecimal currentStake;           // single source of truth (slider + field both drive this)
+    private boolean syncing = false;           // re-entrancy guard so field↔slider updates don't loop
     private static final int STEPS = 1000;
 
     public CounterSheet(MainActivity a, Bet bet) {
@@ -59,7 +66,7 @@ public class CounterSheet extends Dialog {
             w.setGravity(Gravity.BOTTOM);
         }
         setContentView(build());
-        update();
+        applyStake(fullAsk, false);   // start pinned at the full ask (Accept)
     }
 
     private View build() {
@@ -96,9 +103,40 @@ public class CounterSheet extends Dialog {
 
         modeLabel = Ui.label(act, "");
         Ui.topMargin(modeLabel, Ui.dp(act, 16)); sheet.addView(modeLabel);
-        valLabel = Ui.money(act, "", Design.sideColor(mySide), 34, true);
-        sheet.addView(valLabel);
+
+        // The big number is now an editable field — type an exact stake (e.g. "4") when the slider
+        // can't land on it. Styled like the old money label (mono-bold, side colour, no box).
+        valInput = new EditText(act);
+        valInput.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        valInput.setTextColor(Design.sideColor(mySide));
+        valInput.setTypeface(Design.monoBold());
+        valInput.setTextSize(34);
+        valInput.setGravity(Gravity.CENTER_VERTICAL);
+        // Underlined box so it reads as a tap-to-type field (not a static number), with a caption below.
+        valInput.setBackground(Design.roundBg(act, Design.SURFACE2(), 12));
+        int vp = Ui.dp(act, 12);
+        valInput.setPadding(vp, Ui.dp(act, 6), vp, Ui.dp(act, 6));
+        valInput.setCursorVisible(true);
+        valInput.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        valInput.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            public void afterTextChanged(Editable s) {
+                if (syncing) return;
+                BigDecimal v;
+                try { v = s.toString().trim().isEmpty() ? Num.GRAIN : Num.of(s.toString().trim()); }
+                catch (Exception e) { return; }              // partial input ("." / "4.") — wait for valid
+                applyStake(clamp(v, Num.GRAIN), true);        // typed values snap only to the 0.01 grain
+            }
+        });
+        sheet.addView(valInput);
+        TextView hint = Ui.text(act, "tap to type an exact amount · slider snaps to round steps",
+                Design.DIM2(), 10, false);
+        Ui.topMargin(hint, Ui.dp(act, 4));
+        sheet.addView(hint);
         escrowLabel = Ui.money(act, "", Design.GOLD(), 12, false);
+        Ui.topMargin(escrowLabel, Ui.dp(act, 8));
         sheet.addView(escrowLabel);
 
         slider = new SeekBar(act);
@@ -110,8 +148,10 @@ public class CounterSheet extends Dialog {
         slider.setLayoutParams(slp);
         slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(SeekBar sb, int prog, boolean fromUser) {
-                if (fromUser) act.performHapticFeedback();
-                update();
+                if (syncing || !fromUser) return;             // ignore programmatic sync-back
+                act.performHapticFeedback();
+                BigDecimal raw = fullAsk.multiply(new BigDecimal(prog / (double) STEPS), Num.MC);
+                applyStake(clamp(raw, grid()), false);        // slider snaps to the coarse grid
             }
             public void onStartTrackingTouch(SeekBar sb) {}
             public void onStopTrackingTouch(SeekBar sb) {}
@@ -152,35 +192,59 @@ public class CounterSheet extends Dialog {
         return scroll;
     }
 
-    /** Slider value = my stake, from the 0.01 grain floor up to the full ask. */
-    private BigDecimal myStake() {
-        double frac = slider.getProgress() / (double) STEPS;
-        BigDecimal v = fullAsk.multiply(new BigDecimal(frac), Num.MC);
+    /** Notch grid for the SLIDER, sized by range so dragging lands on round numbers: ≥20→1, ≥5→0.5,
+     *  ≥1→0.1, else 0.01. The FIELD always uses the finer 0.01 grain for exact typed entry. */
+    private BigDecimal grid() {
+        if (fullAsk.compareTo(new BigDecimal("20")) >= 0) return new BigDecimal("1");
+        if (fullAsk.compareTo(new BigDecimal("5"))  >= 0) return new BigDecimal("0.5");
+        if (fullAsk.compareTo(new BigDecimal("1"))  >= 0) return new BigDecimal("0.1");
+        return Num.GRAIN;
+    }
+
+    /** Clamp to [0.01, fullAsk] and snap to grid g. Typing above the ask = accept at the full ask. */
+    private BigDecimal clamp(BigDecimal v, BigDecimal g) {
+        if (v == null) return Num.GRAIN;
+        if (v.compareTo(fullAsk) > 0) v = fullAsk;
+        v = v.divide(g, 0, java.math.RoundingMode.HALF_UP).multiply(g);
         if (v.compareTo(Num.GRAIN) < 0) v = Num.GRAIN;
-        return v.divide(Num.GRAIN, 0, java.math.RoundingMode.HALF_UP).multiply(Num.GRAIN);
+        if (v.compareTo(fullAsk) > 0) v = fullAsk;
+        return v;
     }
 
     private boolean isAccept(BigDecimal stake) {
         return stake.subtract(fullAsk).abs().compareTo(new BigDecimal("0.01")) < 0;
     }
 
-    private void update() {
-        BigDecimal stake = myStake();
-        boolean accept = isAccept(stake);
-        BigDecimal lock = Num.lock(stake);
+    /** Set the (already clamped/snapped) stake and reflect it into the slider, the field (unless the
+     *  field is the source — preserve the caret), and the terms labels. Guarded against sync loops. */
+    private void applyStake(BigDecimal stake, boolean fromField) {
+        currentStake = stake;
+        syncing = true;
+        double frac = fullAsk.signum() > 0 ? stake.divide(fullAsk, Num.MC).doubleValue() : 1.0;
+        int prog = (int) Math.round(frac * STEPS);
+        slider.setProgress(Math.max(0, Math.min(STEPS, prog)));
+        if (!fromField) {
+            valInput.setText(Num.plain(stake));
+            valInput.setSelection(valInput.getText().length());
+        }
+        syncing = false;
+        updateLabels();
+    }
 
+    private void updateLabels() {
+        boolean accept = isAccept(currentStake);
+        BigDecimal lock = Num.lock(currentStake);
         modeLabel.setText(accept ? "Accept — your stake" : "Counter — your stake");
-        valLabel.setText(Num.plain(stake));
         escrowLabel.setText("+ 25% escrow → locks " + Num.plain(lock));
         termsWin.setText("Win  +" + Num.plain(theirStake));
-        termsLose.setText("Lose  −" + Num.plain(stake));
+        termsLose.setText("Lose  −" + Num.plain(currentStake));
         cta.setText(accept
                 ? "ACCEPT — lock " + Num.plain(lock)
                 : "COUNTER — lock " + Num.plain(lock));
     }
 
     private void submit() {
-        final BigDecimal stake = myStake();
+        final BigDecimal stake = currentStake;
         boolean accept = isAccept(stake);
         cta.setEnabled(false);
         status.setTextColor(Design.DIM());
@@ -188,7 +252,10 @@ public class CounterSheet extends Dialog {
 
         if (accept) {
             act.txn.fill(bet, new OpenlyTxn.Done() {
-                public void ok() { act.toast("Accepted — confirming on-chain"); act.refreshCurrent(); dismiss(); }
+                public void ok() {
+                    act.scanner.markFilled(bet.nonce);   // hide the open coin now (spent, but unconfirmed ~1-2 min)
+                    act.toast("Accepted — confirming on-chain"); act.refreshCurrent(); dismiss();
+                }
                 public void fail(String m) { statusFail("Accept failed: " + m); }
             });
         } else {

@@ -58,12 +58,10 @@ public class SettleEngine {
         return p;
     }
 
-    /** I declare an outcome: build + sign + export the settlement, store it, send it to my counterparty. */
-    // A single sealed message (a coin's state value) holds well under 2 KB, but a signed settlement
-    // hex is ~10 KB. So the hex is split into CHUNK-sized SETTLE_TXN messages and reassembled by the
-    // receiver, keyed by (nonce, txnsha3). SETTLE_PROPOSE carries only metadata + the chunk count.
-    private static final int CHUNK = 900;   // hex chars per message (+ JSON/seal overhead stays < limit)
-
+    /** I declare an outcome: build + sign + export the settlement, store it, and send the WHOLE signed
+     *  hex to my counterparty in ONE sealed message. No chunking: the ~14 KB signed blob rides in a
+     *  single coin's state var (CommsTransport posts with storestate:true, node limit ~64 KB) — the
+     *  same one-coin mechanism PocketFS/MinimaFS use to put a whole site on-chain. */
     public void propose(Bet bet, int outcome, Cb cb) {
         if (!bet.isMine && !bet.isMyCounter) { cb.fail("not a party"); return; }
         final Payout p = payout(bet, outcome);
@@ -71,74 +69,51 @@ public class SettleEngine {
                 new OpenlyTxn.Exported() {
                     public void ok(String hex) {
                         String sha3 = CoSigner.sha3Hex(hex);
+                        if (hex == null || hex.isEmpty() || sha3 == null) {
+                            cb.fail("could not hash settlement"); return;
+                        }
                         long now = System.currentTimeMillis();
                         db.upsertProposal(bet.nonce, "OUT", outcome, sha3, hex,
                                 Num.plain(p.winnerAmt), Num.plain(p.loserAmt), "SENT", now);
-                        int total = (hex.length() + CHUNK - 1) / CHUNK;
-                        String to = theirCommsId(bet);
 
-                        // 1) metadata proposal (no hex — too big for one message)
                         OpenlyMessage prop = new OpenlyMessage();
                         prop.type = OpenlyMessage.SETTLE_PROPOSE;
                         prop.ref = bet.nonce;
-                        prop.randomid = rid(now, sha3, -1);
-                        prop.to = to; prop.date = now; prop.coinid = bet.coinid;
+                        prop.randomid = rid(now, sha3);
+                        prop.to = theirCommsId(bet); prop.date = now; prop.coinid = bet.coinid;
                         prop.outcome = outcome;
                         prop.winnerAmt = Num.plain(p.winnerAmt);
                         prop.loserAmt = Num.plain(p.loserAmt);
                         prop.txnsha3 = sha3;
-                        prop.total = total;
-                        comms.send(to, prop, noop());
-
-                        // 2) the hex chunks
-                        for (int seq = 0; seq < total; seq++) {
-                            int end = Math.min(hex.length(), (seq + 1) * CHUNK);
-                            OpenlyMessage ch = new OpenlyMessage();
-                            ch.type = OpenlyMessage.SETTLE_TXN;
-                            ch.ref = bet.nonce;
-                            ch.randomid = rid(now, sha3, seq);
-                            ch.to = to; ch.date = now;
-                            ch.txnsha3 = sha3; ch.seq = seq; ch.total = total;
-                            ch.hexchunk = hex.substring(seq * CHUNK, end);
-                            comms.send(to, ch, noop());
-                        }
+                        prop.hexchunk = hex;         // the WHOLE signed hex, inline — one coin, no chunking
+                        prop.total = 1;
+                        // Post to the per-bet settlement address (not the shared OPENLY channel), so the
+                        // counterparty finds it reliably at any depth without shared-address bloat.
+                        comms.sendTo(OpenlyContract.settleAddr(bet.nonce), prop.to, prop, noop());
                         cb.ok();
                     }
                     public void fail(String msg) { cb.fail("build: " + msg); }
                 });
     }
 
-    private static String rid(long now, String sha3, int seq) {
-        return "0x" + Long.toHexString(now) + Integer.toHexString((sha3.hashCode() & 0xffff)) + "_" + (seq + 1);
+    private static String rid(long now, String sha3) {
+        int tag = (sha3 == null ? 0 : sha3.hashCode()) & 0xffff;   // null-safe: never crash a message id
+        return "0x" + Long.toHexString(now) + Integer.toHexString(tag);
     }
 
-    /** Store an inbound SETTLE_PROPOSE (metadata only; hex arrives as SETTLE_TXN chunks). */
+    /** Store an inbound SETTLE_PROPOSE. It now carries the WHOLE signed hex inline — sha3-verify it and,
+     *  if it matches, mark RECEIVED so the Agree button shows. Corrupt/short → AWAITING (a resend replaces). */
     public void onInboundPropose(OpenlyMessage m) {
         long now = System.currentTimeMillis();
-        // AWAITING until all chunks are in and the sha3 checks out — Agree stays hidden till then.
-        db.upsertProposal(m.ref, "IN", m.outcome, m.txnsha3, null,
-                m.winnerAmt, m.loserAmt, "AWAITING", now);
-        tryReassemble(m.ref, m.txnsha3, m.total);
-    }
-
-    /** A SETTLE_TXN chunk arrived — try to reassemble the full hex and promote the proposal. */
-    public void onInboundChunk(OpenlyMessage m) {
-        tryReassemble(m.ref, m.txnsha3, m.total);
-    }
-
-    private void tryReassemble(String nonce, String sha3, int total) {
-        if (sha3 == null || sha3.isEmpty() || total <= 0) return;
-        java.util.List<String> bodies = db.chunksFor(nonce, sha3);   // chunk message JSON, ordered by seq
-        if (bodies.size() < total) return;                 // still waiting for chunks
-        StringBuilder sb = new StringBuilder();
-        for (String body : bodies) {
-            OpenlyMessage cm = OpenlyMessage.fromWire(body.getBytes(java.nio.charset.StandardCharsets.UTF_8), "");
-            if (cm != null && cm.hexchunk != null) sb.append(cm.hexchunk);
+        String hex = m.hexchunk;
+        String local = (hex == null || hex.isEmpty()) ? null : CoSigner.sha3Hex(hex);
+        if (local == null || !local.equalsIgnoreCase(strip(m.txnsha3))) {
+            db.upsertProposal(m.ref, "IN", m.outcome, m.txnsha3, null,
+                    m.winnerAmt, m.loserAmt, "AWAITING", now);
+            return;
         }
-        String hex = sb.toString();
-        String local = CoSigner.sha3Hex(hex);
-        if (local == null || !local.equalsIgnoreCase(strip(sha3))) return;   // incomplete/corrupt — wait
-        db.setProposalHexReceived(nonce, hex, System.currentTimeMillis());   // → state RECEIVED, Agree shows
+        db.upsertProposal(m.ref, "IN", m.outcome, m.txnsha3, hex,
+                m.winnerAmt, m.loserAmt, "RECEIVED", now);   // full hex present + verified → Agree shows
     }
 
     private static String strip(String s) {
