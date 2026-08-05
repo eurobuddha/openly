@@ -163,6 +163,7 @@ public class MainActivity extends AppCompatActivity {
         boolean fresh = db.insertMessageIfNew(m, true);
         if (fresh) {
             if (OpenlyMessage.SETTLE_PROPOSE.equals(m.type)) settle.onInboundPropose(m);
+            else if (OpenlyMessage.SETTLE_TXN.equals(m.type)) settle.onInboundChunk(m);
             ui.post(this::refreshCurrent);
         }
         return fresh;

@@ -107,6 +107,13 @@ public class OpenlyDb extends SQLiteOpenHelper {
         } finally { c.close(); }
     }
 
+    /** All chunks reassembled + sha3-verified: store the full hex and mark RECEIVED (Agree can show). */
+    public void setProposalHexReceived(String nonce, String hex, long now) {
+        ContentValues cv = new ContentValues();
+        cv.put("hex", hex); cv.put("state", "RECEIVED"); cv.put("updated", now);
+        getWritableDatabase().update("proposals", cv, "nonce=? AND direction='IN'", new String[]{nonce});
+    }
+
     public void setProposalState(String nonce, String direction, String state, long now) {
         ContentValues cv = new ContentValues();
         cv.put("state", state); cv.put("updated", now);
