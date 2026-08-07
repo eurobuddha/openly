@@ -2,15 +2,15 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
-// Automatic versioning derived from git — no hand-set "1.0.0". versionCode = commit count,
-// versionName = 0.0.<count>+<shortSha> (with "-dirty" when the tree has uncommitted changes), so a
-// build's version always maps back to an exact commit. Pre-1.0 while in active development.
+// versionName = the milestone (0.1.0) + the exact commit sha, so a build always maps back to a commit;
+// versionCode = commit count (monotonic). Bump the milestone by hand at each release.
+def RELEASE = "0.1.0"
 def gitCount = { ->
     try { return "git rev-list --count HEAD".execute(null, rootDir).text.trim().toInteger() }
     catch (ignored) { return 1 }
 }
-def gitVersionName = { ->
-    try { return "git describe --tags --always --dirty".execute(null, rootDir).text.trim() }
+def gitSha = { ->
+    try { return "git rev-parse --short HEAD".execute(null, rootDir).text.trim() }
     catch (ignored) { return "dev" }
 }
 
@@ -23,7 +23,7 @@ android {
         minSdk 28
         targetSdk 35
         versionCode gitCount()
-        versionName "0.0." + gitCount() + "+" + gitVersionName()
+        versionName RELEASE + "+" + gitSha()
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 

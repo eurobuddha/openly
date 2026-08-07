@@ -156,6 +156,9 @@ public final class Design {
         });
     }
 
+    // In-flight text-colour flashes, so an overlapping pulse cancels the prior one and restores cleanly.
+    private static final java.util.Map<View, ValueAnimator> pulseFlash = new java.util.WeakHashMap<>();
+
     public static void pulse(final View v, final int flashColor) {
         if (v == null) return;
         v.post(() -> {
@@ -171,17 +174,28 @@ public final class Design {
             set.start();
             if (v instanceof TextView) {
                 final TextView tv = (TextView) v;
-                final int original = tv.getCurrentTextColor();
-                ValueAnimator flash = ValueAnimator.ofArgb(original, flashColor);
+                // Cancel any in-flight flash FIRST (it synchronously restores its captured base), so a
+                // second overlapping pulse captures the real base colour, not a mid-flash transient.
+                ValueAnimator prev = pulseFlash.get(tv);
+                if (prev != null) prev.cancel();
+                final int base = tv.getCurrentTextColor();
+                final ValueAnimator flash = ValueAnimator.ofArgb(base, flashColor);
                 flash.setDuration(220);
                 flash.setRepeatMode(ValueAnimator.REVERSE);
                 flash.setRepeatCount(3);
                 flash.addUpdateListener(a -> tv.setTextColor((int) a.getAnimatedValue()));
                 flash.addListener(new AnimatorListenerAdapter() {
-                    @Override public void onAnimationEnd(Animator a) { tv.setTextColor(original); }
+                    @Override public void onAnimationEnd(Animator a) { tv.setTextColor(base); pulseFlash.remove(tv, flash); }
                 });
+                pulseFlash.put(tv, flash);
                 flash.start();
             }
         });
+    }
+
+    /** Bounce + flash n times, ~240ms apart — a louder "something arrived" cue than a single pulse. */
+    public static void pulseTimes(final View v, final int flashColor, final int n) {
+        if (v == null) return;
+        for (int i = 0; i < n; i++) v.postDelayed(() -> pulse(v, flashColor), i * 240L);
     }
 }

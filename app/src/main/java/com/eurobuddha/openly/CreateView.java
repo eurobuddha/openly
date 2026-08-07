@@ -23,15 +23,21 @@ import com.eurobuddha.comms.NodeApi;
  */
 public class CreateView extends BaseView {
 
-    private EditText propIn, stakeIn, wantIn, arbPkIn, arbAddrIn;
+    // Remember the last arbiter used so the next wager is pre-populated (edit or clear any time).
+    private static final String PREFS = "openly_arbiter";
+
+    private EditText propIn, stakeIn, wantIn, arbPkIn, arbAddrIn, arbCommsIn;
     private int side = 1;
     private TextView sideTrue, sideFalse, escrowCap, oddsCap, statusTv;
     private TextView cta;
     private int timeout = 200;
 
+    private boolean lastDark;
+
     public CreateView(MainActivity a) {
         super(a, new ScrollView(a));
         buildForm();
+        lastDark = Design.isDark();
     }
 
     private EditText input(String hint, int type) {
@@ -61,6 +67,7 @@ public class CreateView extends BaseView {
 
     private void buildForm() {
         ScrollView sv = (ScrollView) root;
+        sv.removeAllViews();                 // rebuildable so the theme toggle repaints the whole form
         sv.setBackgroundColor(Design.BG());
         LinearLayout col = Ui.col(act);
         int p = Ui.dp(act, 16);
@@ -102,6 +109,14 @@ public class CreateView extends BaseView {
         field(col, "Arbiter public key", arbPkIn);
         arbAddrIn = input("0x…", InputType.TYPE_CLASS_TEXT);
         field(col, "Arbiter address", arbAddrIn);
+        arbCommsIn = input("0x… (optional)", InputType.TYPE_CLASS_TEXT);
+        field(col, "Arbiter comms id — enables arbiter chat", arbCommsIn);
+
+        // Sticky arbiter: pre-fill from the last wager so you don't re-paste every time.
+        android.content.SharedPreferences ap = act.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE);
+        arbPkIn.setText(ap.getString("pk", ""));
+        arbAddrIn.setText(ap.getString("addr", ""));
+        arbCommsIn.setText(ap.getString("commsid", ""));
 
         TextWatcher w = new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
@@ -157,20 +172,33 @@ public class CreateView extends BaseView {
         if (stake != null && want != null && stake.signum() > 0 && want.signum() > 0) {
             BigDecimal mult = want.divide(stake, Num.MC);
             String other = side == 1 ? "FALSE" : "TRUE";
-            oddsCap.setText("Implied odds — they get " + Num.plain(mult.stripTrailingZeros())
+            oddsCap.setText(Num.ratio(stake, want) + "  ·  " + Num.plain(stake) + " wants "
+                    + Num.plain(want) + "  ·  they get " + Num.plain(mult.stripTrailingZeros())
                     + "× if " + other);
         } else oddsCap.setText("");
     }
 
     private void submit() {
+        if (act.identityOrphaned) { fail("Your node's seed no longer matches this app — new bets are blocked. Reinstall Openly."); return; }
         String prop = propIn.getText().toString().trim();
         BigDecimal stake = parse(stakeIn), want = parse(wantIn);
         String arbpk = arbPkIn.getText().toString().trim();
         String arbaddr = arbAddrIn.getText().toString().trim();
+        final String arbcommsid = arbCommsIn.getText().toString().trim();
         if (prop.isEmpty()) { fail("Enter a proposition"); return; }
         if (!Num.validStake(stake)) { fail("Stake must be ≥ 0.1 in 0.01 steps"); return; }
         if (!Num.validStake(want)) { fail("They-must-stake must be ≥ 0.1 in 0.01 steps"); return; }
         if (!Util.isValidAddress(arbpk) || !Util.isValidAddress(arbaddr)) { fail("Enter valid arbiter key + address"); return; }
+        // A real comms id is boxPk‖signPk = 64 bytes → 0x + 128 hex. Require the full width so a
+        // truncated paste can't pin a value that silently fails arbiter-chat auth on the parties.
+        if (!arbcommsid.isEmpty() && !arbcommsid.matches("^0x[0-9a-fA-F]{128,}$")) {
+            fail("Arbiter comms id looks wrong — paste the full value, or leave blank"); return;
+        }
+        // Sticky arbiter: remember it as soon as the fields are valid (not only on a confirmed post),
+        // so a cancelled or failed attempt still leaves it pre-filled for next time.
+        act.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE).edit()
+                .putString("pk", arbpk).putString("addr", arbaddr)
+                .putString("commsid", arbcommsid).apply();
         statusTv.setTextColor(Design.DIM());
         statusTv.setText("Posting…");
         cta.setEnabled(false);
@@ -182,14 +210,18 @@ public class CreateView extends BaseView {
                 String nonce = r.optJSONObject("response") != null
                         ? r.optJSONObject("response").optString("random", "") : "";
                 if (nonce.isEmpty()) { fail("nonce failed"); cta.setEnabled(true); return; }
-                act.txn.post(prop, side, fStake, fWant, arbpk, arbaddr, timeout, 0, nonce,
+                act.txn.post(prop, side, fStake, fWant, arbpk, arbaddr, arbcommsid, timeout, 0, nonce,
                         new OpenlyTxn.Done() {
                             public void ok() {
+                                Sfx.lock();
                                 statusTv.setTextColor(Design.TRUE_C());
                                 statusTv.setText("Posted — confirming on-chain (~1–2 min)");
                                 cta.setEnabled(true);
+                                // Watch it land: MY BETS shows an animated "confirming" card until the coin appears.
+                                act.addPendingPost(nonce, prop, side, fStake, fWant, "POST", null);
                                 propIn.setText(""); stakeIn.setText(""); wantIn.setText("");
-                                act.toast("Bet posted");
+                                act.toast("Bet posted — see it in My Bets");
+                                act.goToTab(1);   // leave POST for MY BETS; the open bet lands there on scan
                             }
                             public void fail(String msg) { fail("Post failed: " + msg); cta.setEnabled(true); }
                         });
@@ -203,5 +235,11 @@ public class CreateView extends BaseView {
         statusTv.setText(msg);
     }
 
-    @Override public void refresh() {}
+    // Rebuild ONLY when the theme actually changed, so a toggle repaints every input/caption/CTA but an
+    // ordinary tab-select doesn't wipe text the user is typing.
+    @Override public void refresh() {
+        if (Design.isDark() == lastDark) return;
+        lastDark = Design.isDark();
+        buildForm();
+    }
 }

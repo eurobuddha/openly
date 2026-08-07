@@ -59,9 +59,11 @@ public class Bet {
         b.ownerstake = safe(c.at(15));
         b.countercommsid = c.at(16);
         b.refreshcount = intOf(c.at(17), 0);
-        b.isMine = myKeys != null && myKeys.contains(b.ownerpk);
-        b.isMyCounter = myKeys != null && myKeys.contains(b.counterpk);
-        b.isMyArb = myKeys != null && myKeys.contains(b.arbpk);
+        // myKeys are stored upper-cased (BetScanner.loadKeys); compare upper-cased so ownership holds
+        // regardless of the hex case the node reports for on-chain state values.
+        b.isMine = owns(myKeys, b.ownerpk);
+        b.isMyCounter = owns(myKeys, b.counterpk);
+        b.isMyArb = owns(myKeys, b.arbpk);
         b.ageBlocks = c.ageFrom(tipBlock);
         return b;
     }
@@ -93,6 +95,10 @@ public class Bet {
     /** Total pot displayed (both stakes, no escrow). */
     public BigDecimal potStakes() {
         return Num.add(ownerBet(), counterBet());
+    }
+
+    private static boolean owns(Set<String> keys, String pk) {
+        return keys != null && pk != null && !pk.isEmpty() && keys.contains(pk.toUpperCase());
     }
 
     private static BigDecimal safe(String s) {

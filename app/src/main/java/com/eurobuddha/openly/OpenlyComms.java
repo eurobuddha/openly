@@ -175,7 +175,10 @@ public class OpenlyComms {
     public void scanSettleAddress(final String address) {
         if (crypto == null || address == null || address.isEmpty()) return;
         node.cmd("coinnotify action:add address:" + address, NodeApi.Cb.NOOP);
-        node.cmd("coins address:" + address, new NodeApi.Cb() {
+        // BOUNDED: re-declares pile a ~28 KB storestate coin at this per-bet address, so an unbounded
+        // `coins address:` reply blows past the 256 KB Binder/IPC limit and force-closes the app. We only
+        // need the latest proposal — read newest-first, capped, and stop at the first coin that opens for me.
+        node.cmd("coins address:" + address + " order:desc depth:16", new NodeApi.Cb() {
             public void onResult(JSONObject r) {
                 org.json.JSONArray arr = r.optJSONArray("response");
                 if (arr == null) return;
@@ -187,6 +190,7 @@ public class OpenlyComms {
                     Opened o = crypto.open(blob);
                     if (o == null || !o.valid) continue;
                     route(coin.optString("coinid", ""), o, coin);
+                    break;   // newest proposal that opened for me — done (older ones are stale re-declares)
                 }
             }
             public void onError(String e) { Log.d(TAG, "scanSettleAddress err: " + e); }

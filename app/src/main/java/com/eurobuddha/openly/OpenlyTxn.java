@@ -29,6 +29,9 @@ public class OpenlyTxn {
     /** Funding coins reserved from post until confirmation (never double-spend across concurrent builds). */
     private final Set<String> inflightCoins = ConcurrentHashMap.newKeySet();
 
+    /** Max funding inputs to combine in one fill (tx-size safety) — mirrors AtomiX's MAX_LOCK_COINS. */
+    private static final int MAX_FUND_COINS = 20;
+
     public OpenlyTxn(NodeApi node, Identity id) {
         this.node = node;
         this.id = id;
@@ -44,7 +47,7 @@ public class OpenlyTxn {
      * lock = stake × 1.25 is sent as @AMOUNT; wantstake is the counter's required lock.
      */
     public void post(String proposition, int side, BigDecimal stake, BigDecimal wantstake,
-                     String arbpk, String arbaddr, int timeout, int settleblock,
+                     String arbpk, String arbaddr, String arbcommsid, int timeout, int settleblock,
                      String nonce, Done done) {
         BigDecimal lock = Num.lock(stake);
         BigDecimal wlock = Num.lock(wantstake);
@@ -61,9 +64,10 @@ public class OpenlyTxn {
             st.put("8", String.valueOf(settleblock));
             st.put("9", nonce);
             st.put("10", id.commsId);
-            // Port 11 is unused by the contract. Disputes reach the arbiter ON-CHAIN (a marker coin to
-            // their port-3 payout address), so there is no separate arbiter comms id to carry.
-            st.put("11", "0");
+            // Port 11 = the arbiter's comms id (unused by the contract). Disputes still reach the arbiter
+            // ON-CHAIN (a marker to their port-3 address); this only lets the parties AUTHENTICATE arbiter
+            // chat messages. Optional — "0" when the poster didn't supply one (then no arbiter chat).
+            st.put("11", arbcommsid == null || arbcommsid.isEmpty() ? "0" : arbcommsid);
             st.put("12", "0");
         } catch (Exception e) { done.fail("state build failed"); return; }
 
@@ -142,46 +146,72 @@ public class OpenlyTxn {
     public void fill(Bet bet, Done done) {
         final BigDecimal need = bet.wantstake;                 // counter's total lock
         final BigDecimal pot = Num.add(bet.amount, bet.wantstake);
-        node.cmd("coins sendable:true tokenid:0x00 depth:400", new NodeApi.Cb() {
+        // Standard wallet coin-selection — the same as AtomiX's responder.selectCoins (proven on the
+        // mxUSDT leg): enumerate my CONFIRMED spendable Minima coins (coinage:1, NO depth cap — the bulk
+        // of a wallet lives in older coins), largest-first → fewest inputs, take until the lock is covered.
+        node.cmd("coins relevant:true sendable:true tokenid:0x00 coinage:1", new NodeApi.Cb() {
             public void onResult(JSONObject r) {
                 JSONArray arr = r.optJSONArray("response");
-                JSONObject fund = null;
-                if (arr != null) {
-                    for (int i = 0; i < arr.length(); i++) {
-                        JSONObject c = arr.optJSONObject(i);
-                        if (c == null) continue;
-                        String cid = c.optString("coinid", "");
-                        if (inflightCoins.contains(cid)) continue;
-                        BigDecimal amt;
-                        try { amt = Num.of(c.optString("amount", "0")); } catch (Exception e) { continue; }
-                        if (amt.compareTo(need) >= 0) { fund = c; break; }
-                    }
+                java.util.List<JSONObject> cs = new java.util.ArrayList<>();
+                if (arr != null) for (int i = 0; i < arr.length(); i++) {
+                    JSONObject c = arr.optJSONObject(i);
+                    if (c != null) cs.add(c);
                 }
-                if (fund == null) { done.fail("No single coin ≥ " + Num.plain(need) + " MINIMA to fund"); return; }
-                final String fundId = fund.optString("coinid", "");
-                final BigDecimal fundAmt;
-                try { fundAmt = Num.of(fund.optString("amount", "0")); }
-                catch (Exception e) { done.fail("bad funding amount"); return; }
-                inflightCoins.add(fundId);
-                buildFill(bet, fundId, fundAmt, pot, need, done);
+                java.util.Collections.sort(cs, (a, b) -> coinAmt(b).compareTo(coinAmt(a)));   // largest first
+                final java.util.List<String> fundIds = new java.util.ArrayList<>();
+                BigDecimal sum = BigDecimal.ZERO;
+                for (JSONObject c : cs) {
+                    if (sum.compareTo(need) >= 0 || fundIds.size() >= MAX_FUND_COINS) break;
+                    String cid = c.optString("coinid", "");
+                    if (cid.isEmpty() || inflightCoins.contains(cid)) continue;
+                    BigDecimal amt = coinAmt(c);
+                    if (amt.signum() <= 0) continue;
+                    fundIds.add(cid);
+                    sum = Num.add(sum, amt);
+                }
+                if (sum.compareTo(need) < 0) {
+                    done.fail(fundIds.size() >= MAX_FUND_COINS
+                            ? "Coins too fragmented — consolidate your wallet, then accept"
+                            : "Insufficient sendable — need " + Num.plain(need) + ", have " + Num.plain(sum));
+                    return;
+                }
+                inflightCoins.addAll(fundIds);
+                buildFill(bet, fundIds, sum, pot, need, done);
             }
             public void onError(String e) { done.fail(e); }
         });
     }
 
-    private void buildFill(Bet bet, String fundId, BigDecimal fundAmt, BigDecimal pot,
+    private void buildFill(Bet bet, java.util.List<String> fundIds, BigDecimal fundSum, BigDecimal pot,
                            BigDecimal need, Done done) {
+        // Route change to a FRESH current-wallet address, never the pinned identity — so a stale/reseeded
+        // identity can never orphan the change (this is what cost real funds before the guard existed).
+        // The identity guard already blocks filling under a mismatched identity; this is defence-in-depth.
+        node.cmd("getaddress", new NodeApi.Cb() {
+            public void onResult(JSONObject r) {
+                JSONObject rp = r.optJSONObject("response");
+                String ca = rp != null ? rp.optString("address", "") : "";
+                buildFillInner(bet, fundIds, fundSum, pot, need,
+                        Util.isValidAddress(ca) ? ca : id.hexaddr, done);
+            }
+            public void onError(String e) { buildFillInner(bet, fundIds, fundSum, pot, need, id.hexaddr, done); }
+        });
+    }
+
+    private void buildFillInner(Bet bet, java.util.List<String> fundIds, BigDecimal fundSum, BigDecimal pot,
+                                BigDecimal need, String changeAddr, Done done) {
         final String txid = tag("fill");
-        BigDecimal change = Num.sub(fundAmt, need);
+        BigDecimal change = Num.sub(fundSum, need);
         List<String> cmds = new ArrayList<>();
         cmds.add("txncreate id:" + txid);
         cmds.add("txninput id:" + txid + " coinid:" + bet.coinid);          // contract coin = input 0
-        cmds.add("txninput id:" + txid + " coinid:" + fundId);
+        for (String cid : fundIds)                                          // wallet funding inputs (multi-coin)
+            cmds.add("txninput id:" + txid + " coinid:" + cid);
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(pot)
                 + " address:" + OpenlyContract.ADDR + " storestate:true");
         if (change.compareTo(new BigDecimal("0.000000001")) > 0) {
             cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(change)
-                    + " address:" + id.hexaddr + " storestate:false");
+                    + " address:" + changeAddr + " storestate:false");
         }
         // state: pin owner region 0–11, phase→1, my identity 13/14/16, 15=@AMOUNT, 17=0
         cmds.add(st(txid, 0, bet.ownerpk));
@@ -213,7 +243,7 @@ public class OpenlyTxn {
             }
             public void fail(String msg) {
                 gate.free();
-                inflightCoins.remove(fundId);   // build failed → coin didn't spend, free it
+                inflightCoins.removeAll(fundIds);   // build failed → coins didn't spend, free them all
                 done.fail(msg);
             }
         }));
@@ -221,6 +251,11 @@ public class OpenlyTxn {
 
     private static String st(String txid, int port, String val) {
         return "txnstate id:" + txid + " port:" + port + " value:" + val;
+    }
+
+    /** Coin amount as BigDecimal, 0 on any parse issue — for sorting/summing candidate funding coins. */
+    private static BigDecimal coinAmt(JSONObject c) {
+        try { return Num.of(c.optString("amount", "0")); } catch (Exception e) { return BigDecimal.ZERO; }
     }
 
     /** Prune inflight reservations to coins still sendable (drops spent ones). Called each block. */

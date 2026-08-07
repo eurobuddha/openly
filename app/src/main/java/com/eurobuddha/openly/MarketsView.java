@@ -20,6 +20,11 @@ import java.util.Map;
 public class MarketsView extends BaseView {
 
     private final LinearLayout list;
+    /** Last-rendered TRUE fraction per proposition — drives the OddsBar "animate only on change". */
+    private final Map<String, Float> lastPct = new java.util.HashMap<>();
+    /** Last-rendered best want per side per proposition — drives the "price changed → throb" pulse. */
+    private final Map<String, BigDecimal> lastTrueWant = new java.util.HashMap<>();
+    private final Map<String, BigDecimal> lastFalseWant = new java.util.HashMap<>();
 
     public MarketsView(MainActivity a) {
         super(a, build(a));
@@ -60,9 +65,16 @@ public class MarketsView extends BaseView {
 
         if (markets.isEmpty()) {
             list.addView(empty());
+            lastPct.clear();
             return;
         }
         for (Market m : markets.values()) list.addView(marketCard(m));
+        // Drop odds-tracking for propositions no longer on the board (bounded memory).
+        java.util.Set<String> keysNow = new java.util.HashSet<>();
+        for (Market m : markets.values()) keysNow.add(m.prop == null || m.prop.isEmpty() ? "?" : m.prop);
+        lastPct.keySet().retainAll(keysNow);
+        lastTrueWant.keySet().retainAll(keysNow);
+        lastFalseWant.keySet().retainAll(keysNow);
     }
 
     private View marketCard(Market m) {
@@ -82,25 +94,51 @@ public class MarketsView extends BaseView {
         bar.setLayoutParams(blp);
         float total = trueAsk.add(falseAsk).floatValue();
         float pct = total <= 0 ? 0.5f : trueAsk.floatValue() / total;
+        // Animate the split only when it actually moved since the last render (not every block rebuild),
+        // so the OddsBar rebalance reads as a real change, not constant motion.
+        String key = m.prop == null || m.prop.isEmpty() ? "?" : m.prop;
+        Float prev = lastPct.get(key);
+        boolean animate = prev != null && Math.abs(prev - pct) > 0.01f;
+        lastPct.put(key, pct);
+        // Price-change detection per side → a throb so a new/updated offer is never a silent change.
+        BigDecimal ptw = lastTrueWant.get(key), pfw = lastFalseWant.get(key);
+        boolean trueChanged = bestTrue != null && ptw != null && ptw.compareTo(trueAsk) != 0;
+        boolean falseChanged = bestFalse != null && pfw != null && pfw.compareTo(falseAsk) != 0;
+        if (bestTrue != null) lastTrueWant.put(key, trueAsk); else lastTrueWant.remove(key);
+        if (bestFalse != null) lastFalseWant.put(key, falseAsk); else lastFalseWant.remove(key);
+        if (trueChanged || falseChanged) Sfx.counter();   // a counter arrived → three bright pings
         bar.setOdds(pct, "TRUE " + Ui.compact(trueAsk), "FALSE " + Ui.compact(falseAsk),
-                bestTrue != null, bestFalse != null, false);
+                bestTrue != null, bestFalse != null, animate);
         card.addView(bar);
 
-        // Per-side offer lines: "TRUE bet 0.5 → win 1  (2.0×)". Shows what each poster staked and the
-        // multiple they'd win, so a taker understands the price before opening the slider.
-        if (bestTrue != null) card.addView(offerLine(bestTrue, 1));
-        if (bestFalse != null) card.addView(offerLine(bestFalse, 0));
+        // Per-side offer lines. A side whose price just moved throbs its odds pill.
+        if (bestTrue != null) card.addView(offerLine(bestTrue, 1, trueChanged));
+        if (bestFalse != null) card.addView(offerLine(bestFalse, 0, falseChanged));
 
         // YOURS — my position in this market (owner sees their stake + odds).
         Bet mine = null;
         for (Bet b : m.yes) if (b.isMine) mine = b;
         for (Bet b : m.no) if (b.isMine) mine = b;
         if (mine != null) {
-            TextView yours = Ui.money(act, "YOURS: " + (mine.side == 1 ? "TRUE" : "FALSE") + " "
-                    + Num.plain(mine.ownerBet()) + " → win " + Num.plain(mine.counterBet())
+            TextView yours = Ui.money(act, "YOURS: " + (mine.side == 1 ? "TRUE" : "FALSE") + "  "
+                    + Num.plain(mine.ownerBet()) + " wants " + Num.plain(mine.counterBet())
+                    + "  ·  " + Num.ratio(mine.ownerBet(), mine.counterBet())
                     + "  ·  waiting for a taker", Design.GOLD(), 12, false);
             Ui.topMargin(yours, Ui.dp(act, 10));
             card.addView(yours);
+            // Cancel is also reachable here (not only on My Bets) — you can always pull your own
+            // untaken offer straight from the board and get your locked stake back.
+            final Bet mineBet = mine;
+            TextView cancel = Ui.button(act, "Cancel my bet", Design.SURFACE2(), Design.DIM(), false);
+            Ui.topMargin(cancel, Ui.dp(act, 8));
+            cancel.setOnClickListener(v -> {
+                cancel.setEnabled(false);
+                act.txn.cancel(mineBet, new OpenlyTxn.Done() {
+                    public void ok() { act.recordCancelled(mineBet); act.toast("Cancelled — funds returning"); act.refreshCurrent(); }
+                    public void fail(String m) { act.toast("Cancel failed: " + m); cancel.setEnabled(true); }
+                });
+            });
+            card.addView(cancel);
         }
 
         // Actions: take/counter the OPPOSITE side of an offer I didn't post. Taking a TRUE offer
@@ -108,37 +146,59 @@ public class MarketsView extends BaseView {
         LinearLayout actions = Ui.row(act);
         Ui.topMargin(actions, Ui.dp(act, 12));
         if (bestTrue != null && !bestTrue.isMine) {
-            TextView t = Ui.button(act, "Accept / Counter TRUE", Design.FALSE_SOFT(), Design.FALSE_C(), false);
+            TextView t = Ui.button(act, "Accept " + Num.ratio(bestTrue.ownerBet(), trueAsk) + " / Counter TRUE",
+                    Design.FALSE_SOFT(), Design.FALSE_C(), false);
             final Bet b = bestTrue;
             t.setOnClickListener(v -> new CounterSheet(act, b).show());
             LinearLayout.LayoutParams lp = Ui.weight(1); lp.rightMargin = Ui.dp(act, 6);
             actions.addView(t, lp);
+            if (trueChanged) Design.pulseTimes(t, Design.FALSE_C(), 3);
         }
         if (bestFalse != null && !bestFalse.isMine) {
-            TextView t = Ui.button(act, "Accept / Counter FALSE", Design.TRUE_SOFT(), Design.TRUE_C(), false);
+            TextView t = Ui.button(act, "Accept " + Num.ratio(bestFalse.ownerBet(), falseAsk) + " / Counter FALSE",
+                    Design.TRUE_SOFT(), Design.TRUE_C(), false);
             final Bet b = bestFalse;
             t.setOnClickListener(v -> new CounterSheet(act, b).show());
             actions.addView(t, Ui.weight(1));
+            if (falseChanged) Design.pulseTimes(t, Design.TRUE_C(), 3);
         }
         if (actions.getChildCount() > 0) card.addView(actions);
         return card;
     }
 
-    /** "TRUE  bet 0.5 → win 1  ·  2.0×" — one poster's offer and the multiple they win. */
-    private View offerLine(Bet b, int side) {
+    /** One poster's offer, made obvious: "[TRUE]  10 wants 20   [1:2]" over "⬡ in 10 M · you".
+     *  When {@code changed}, the odds pill throbs so a re-priced offer is never a silent change. */
+    private View offerLine(Bet b, int side, boolean changed) {
         BigDecimal stake = b.ownerBet(), want = b.counterBet();
-        String mult = want.signum() > 0 && stake.signum() > 0
-                ? want.divide(stake, Num.MC).stripTrailingZeros().toPlainString() + "×" : "—";
+        LinearLayout col = Ui.col(act);
+        Ui.topMargin(col, Ui.dp(act, 10));
+
         LinearLayout row = Ui.row(act);
-        Ui.topMargin(row, Ui.dp(act, 8));
-        row.addView(Ui.text(act, side == 1 ? "TRUE" : "FALSE", Design.sideColor(side), 12, true));
-        row.addView(Ui.money(act, "  bet " + Num.plain(stake) + " → win " + Num.plain(want),
-                Design.DIM(), 12, false));
-        TextView m = Ui.money(act, mult, Design.sideColor(side), 12, true);
-        LinearLayout.LayoutParams lp = Ui.weight(1);
-        m.setGravity(android.view.Gravity.END);
-        row.addView(m, lp);
-        return row;
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(Ui.chip(act, side == 1 ? "TRUE" : "FALSE", Design.sideColor(side), Design.sideSoft(side)));
+        // The headline terms: "10 wants 20" — stake, then what a taker must put up.
+        row.addView(Ui.money(act, "  " + Num.plain(stake) + " wants " + Num.plain(want),
+                Design.TEXT(), 16, true));
+        View sp = new View(act);
+        row.addView(sp, Ui.weight(1));                              // push the odds pill to the right edge
+        // The odds, simplified and loud: 10:20 → "1:2", 50:250 → "1:5".
+        TextView pill = Ui.chip(act, Num.ratio(stake, want), Design.sideColor(side), Design.sideSoft(side));
+        row.addView(pill);
+        if (changed) Design.pulseTimes(pill, Design.sideColor(side), 3);   // bounce 3× on a re-price
+        col.addView(row);
+
+        // Caption: bet size ("in 10") + poster identicon/id, so the offer is clear and never anonymous.
+        LinearLayout byRow = Ui.row(act);
+        Ui.topMargin(byRow, Ui.dp(act, 4));
+        byRow.setGravity(Gravity.CENTER_VERTICAL);
+        IdentityBadge badge = new IdentityBadge(act, b.ownerpk, 14);
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(Ui.dp(act, 14), Ui.dp(act, 14));
+        blp.rightMargin = Ui.dp(act, 6);
+        byRow.addView(badge, blp);
+        byRow.addView(Ui.money(act, "in " + Num.plain(stake) + " M  ·  "
+                + (b.isMine ? "you" : Util.shorten(b.ownerpk)), Design.DIM2(), 11, false));
+        col.addView(byRow);
+        return col;
     }
 
     private Bet pickBest(List<Bet> side) {

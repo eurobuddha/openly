@@ -108,4 +108,17 @@ public final class Ui {
         if (d >= 10000) return String.format("%.1fk", d / 1000.0);
         return Num.plain(n);
     }
+
+    /** A slow "alive" alpha throb — for a pending/confirming indicator. Cancels itself on detach. */
+    public static void throb(final View v) {
+        final android.animation.ObjectAnimator a =
+                android.animation.ObjectAnimator.ofFloat(v, "alpha", 1f, 0.35f, 1f);
+        a.setDuration(1100);
+        a.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+        a.start();
+        v.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            public void onViewAttachedToWindow(View x) {}
+            public void onViewDetachedFromWindow(View x) { a.cancel(); v.setAlpha(1f); }
+        });
+    }
 }

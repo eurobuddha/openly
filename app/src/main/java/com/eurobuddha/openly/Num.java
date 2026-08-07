@@ -64,4 +64,16 @@ public final class Num {
     public static boolean eq(BigDecimal a, BigDecimal b) {
         return a != null && b != null && a.compareTo(b) == 0;
     }
+
+    /** Simplified whole-number odds ratio "a:b" — 10,20 → "1:2"; 50,250 → "1:5"; 0.5,1 → "1:2". */
+    public static String ratio(BigDecimal a, BigDecimal b) {
+        if (a == null || b == null || a.signum() <= 0 || b.signum() <= 0) return "—";
+        int dp = Math.max(Math.max(0, a.stripTrailingZeros().scale()),
+                          Math.max(0, b.stripTrailingZeros().scale()));
+        java.math.BigInteger ai = a.movePointRight(dp).toBigInteger();
+        java.math.BigInteger bi = b.movePointRight(dp).toBigInteger();
+        java.math.BigInteger g = ai.gcd(bi);
+        if (g.signum() == 0) return "—";
+        return ai.divide(g) + ":" + bi.divide(g);
+    }
 }
