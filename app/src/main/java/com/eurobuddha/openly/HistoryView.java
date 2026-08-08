@@ -69,12 +69,13 @@ public class HistoryView extends BaseView {
 
         // Money in / out at equal billing, then the net. Skipped for result 5 (SETTLED — outcome
         // unknown, so no amounts are asserted). Falls back gracefully for pre-v3 rows with no columns.
+        String cur = Util.tokenLabel(h.tokenid);   // null tokenid (pre-v4 rows) → "Minima"
         if (h.result != 5 && h.moneyIn != null && h.moneyOut != null) {
-            TextView money = Ui.money(act, "in +" + h.moneyIn + " M   ·   out −" + h.moneyOut + " M",
+            TextView money = Ui.money(act, "in +" + h.moneyIn + " " + cur + "   ·   out −" + h.moneyOut + " " + cur,
                     Design.TEXT(), 13, false);
             Ui.topMargin(money, Ui.dp(act, 6));
             card.addView(money);
-            TextView net = Ui.money(act, "net " + (h.amount == null ? "0" : h.amount) + " M", color, 14, true);
+            TextView net = Ui.money(act, "net " + (h.amount == null ? "0" : h.amount) + " " + cur, color, 14, true);
             Ui.topMargin(net, Ui.dp(act, 4));
             card.addView(net);
         } else if (h.result == 5) {

@@ -17,7 +17,7 @@ import java.util.List;
 public class OpenlyDb extends SQLiteOpenHelper {
 
     private static final String NAME = "openly.db";
-    private static final int VERSION = 3;   // v2: history table · v3: history path + money in/out
+    private static final int VERSION = 4;   // v2: history · v3: path + money · v4: history tokenid (dual token)
 
     public OpenlyDb(Context c) {
         super(c, NAME, null, VERSION);
@@ -47,15 +47,16 @@ public class OpenlyDb extends SQLiteOpenHelper {
     // "arbiter ruled FALSE · +22.5 in · 12.5 out" instead of a bare signed net.
     private static final String HISTORY_DDL =
             "CREATE TABLE IF NOT EXISTS history (nonce TEXT PRIMARY KEY, proposition TEXT, result INTEGER," +
-            " amount TEXT, side INTEGER, date INTEGER, path TEXT, moneyin TEXT, moneyout TEXT)";
+            " amount TEXT, side INTEGER, date INTEGER, path TEXT, moneyin TEXT, moneyout TEXT, tokenid TEXT)";
 
     @Override public void onUpgrade(SQLiteDatabase db, int o, int n) {
-        if (o < 2) db.execSQL(HISTORY_DDL);        // v1 → v2 adds history (current DDL already has v3 cols)
+        if (o < 2) db.execSQL(HISTORY_DDL);        // v1 → v2 adds history (current DDL already has later cols)
         if (o < 3) {                                // v2 → v3: enrich existing history table
             addColumn(db, "history", "path", "TEXT");
             addColumn(db, "history", "moneyin", "TEXT");
             addColumn(db, "history", "moneyout", "TEXT");
         }
+        if (o < 4) addColumn(db, "history", "tokenid", "TEXT");   // v3 → v4: dual-token history label
     }
 
     /** ALTER ADD COLUMN, tolerant of "column already exists" (SQLite has no IF NOT EXISTS for this). */
@@ -170,11 +171,12 @@ public class OpenlyDb extends SQLiteOpenHelper {
 
     // ---- history (terminal bets) ----
     public void addHistory(String nonce, String proposition, int result, String amount, int side,
-                           String path, String moneyIn, String moneyOut, long now) {
+                           String path, String moneyIn, String moneyOut, String tokenid, long now) {
         ContentValues cv = new ContentValues();
         cv.put("nonce", nonce); cv.put("proposition", proposition); cv.put("result", result);
         cv.put("amount", amount); cv.put("side", side); cv.put("date", now);
         cv.put("path", path); cv.put("moneyin", moneyIn); cv.put("moneyout", moneyOut);
+        cv.put("tokenid", tokenid);
         getWritableDatabase().insertWithOnConflict("history", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
@@ -187,7 +189,7 @@ public class OpenlyDb extends SQLiteOpenHelper {
     public List<HistoryRow> history() {
         List<HistoryRow> out = new ArrayList<>();
         Cursor c = getReadableDatabase().rawQuery(
-                "SELECT nonce,proposition,result,amount,side,date,path,moneyin,moneyout " +
+                "SELECT nonce,proposition,result,amount,side,date,path,moneyin,moneyout,tokenid " +
                 "FROM history ORDER BY date DESC", null);
         try {
             while (c.moveToNext()) {
@@ -195,6 +197,7 @@ public class OpenlyDb extends SQLiteOpenHelper {
                 h.nonce = c.getString(0); h.proposition = c.getString(1); h.result = c.getInt(2);
                 h.amount = c.getString(3); h.side = c.getInt(4); h.date = c.getLong(5);
                 h.path = c.getString(6); h.moneyIn = c.getString(7); h.moneyOut = c.getString(8);
+                h.tokenid = c.getString(9);
                 out.add(h);
             }
         } finally { c.close(); }
@@ -202,7 +205,7 @@ public class OpenlyDb extends SQLiteOpenHelper {
     }
 
     public static class HistoryRow {
-        public String nonce, proposition, amount, path, moneyIn, moneyOut;
+        public String nonce, proposition, amount, path, moneyIn, moneyOut, tokenid;
         public int result, side;    // result: 1 WON · 0 LOST · 2 VOID · 3 CANCELLED · 4 REFUNDED
         public long date;           // path: SELF · ARBITER · TIMEOUT · CANCEL · VOID
     }

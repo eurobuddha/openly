@@ -58,6 +58,7 @@ public class MainActivity extends AppCompatActivity {
     // ---- Openly state (read by views) ----
     public String contractAddr = OpenlyContract.ADDR;
     public String balance = "—";
+    public String usdtBalance = "0";
     public BetScanner scanner;
     public Identity identity;
     public OpenlyTxn txn;
@@ -429,7 +430,7 @@ public class MainActivity extends AppCompatActivity {
         // it. The numeric values live in moneyin/moneyout; never BigDecimal-parse this column.
         String amount = (net.signum() >= 0 ? "+" : "−") + Num.plain(net.abs());
         db.addHistory(b.nonce, b.proposition, result, amount, mySide, path,
-                Num.plain(in), Num.plain(out), System.currentTimeMillis());
+                Num.plain(in), Num.plain(out), b.tokenid, System.currentTimeMillis());
         clearArbiterState(b.nonce);         // terminal → drop persisted AT-ARBITER + withdrawn flags
     }
 
@@ -501,7 +502,7 @@ public class MainActivity extends AppCompatActivity {
         if (b == null || b.nonce == null) return;
         java.math.BigDecimal lock = Payouts.myLock(b);
         db.addHistory(b.nonce, b.proposition, 3 /*CANCELLED*/, "0", Payouts.mySide(b),
-                "CANCEL", Num.plain(lock), Num.plain(lock), System.currentTimeMillis());
+                "CANCEL", Num.plain(lock), Num.plain(lock), b.tokenid, System.currentTimeMillis());
     }
 
     /** Send a per-bet chat message (small, over the shared channel), stored locally as sent. */
@@ -668,7 +669,11 @@ public class MainActivity extends AppCompatActivity {
                     try { created = Integer.parseInt(cj.optString("created", String.valueOf(seenBlock))); }
                     catch (Exception ex) { created = seenBlock; }        // unparseable → in-window, never drop the real coin
                     if (created < seenBlock) continue;                   // reject stale/unrelated coins
-                    amounts.add(cj.optString("amount", ""));
+                    // Token coins report value in `tokenamount` (raw `amount` ~1e-37); native uses `amount`.
+                    // Normalize through Num.plain so it matches the token-scale expected candidate strings.
+                    String ta = cj.optString("tokenamount", "");
+                    String raw = !ta.isEmpty() ? ta : cj.optString("amount", "");
+                    try { amounts.add(Num.plain(Num.of(raw))); } catch (Exception ex) { if (!raw.isEmpty()) amounts.add(raw); }
                 }
                 ui.post(() -> {
                     for (Cand c : cands) {
@@ -705,7 +710,7 @@ public class MainActivity extends AppCompatActivity {
         settleShown.add(b.nonce);
         java.math.BigDecimal lock = Payouts.myLock(b);
         db.addHistory(b.nonce, b.proposition, 5 /*SETTLED, outcome unknown*/, "?", Payouts.mySide(b),
-                "SETTLED", Num.plain(lock), Num.plain(lock), System.currentTimeMillis());
+                "SETTLED", Num.plain(lock), Num.plain(lock), b.tokenid, System.currentTimeMillis());
         clearArbiterState(b.nonce);   // terminal → drop persisted arbiter flags even on the unknown path
         toast("A bet settled — check History");
     }
@@ -799,7 +804,10 @@ public class MainActivity extends AppCompatActivity {
     private void updateHeaderStat() {
         if (blockNo == null) return;
         String bal = "—".equals(balance) ? "—" : safeBal(balance);
-        blockNo.setText(bal + " M  ·  #" + currentBlock);
+        String head = bal + " M";
+        try { if (usdtBalance != null && new java.math.BigDecimal(usdtBalance).signum() > 0)
+                  head += "  ·  " + safeBal(usdtBalance) + " mxU"; } catch (Exception ignored) {}
+        blockNo.setText(head + "  ·  #" + currentBlock);
         boolean balChanged = !bal.equals(lastShownBal) && !"—".equals(lastShownBal) && !"—".equals(bal);
         boolean blockChanged = lastShownBlock != 0 && currentBlock != lastShownBlock;
         lastShownBal = bal;
@@ -885,10 +893,9 @@ public class MainActivity extends AppCompatActivity {
                     JSONArray arr = r.getJSONArray("response");
                     for (int i = 0; i < arr.length(); i++) {
                         JSONObject t = arr.getJSONObject(i);
-                        if ("0x00".equals(t.optString("tokenid"))) {
-                            balance = t.optString("sendable", "0");
-                            break;
-                        }
+                        String tid = t.optString("tokenid");
+                        if ("0x00".equals(tid)) balance = t.optString("sendable", "0");
+                        else if (Util.MXUSDT_TOKENID.equalsIgnoreCase(tid)) usdtBalance = t.optString("sendable", "0");
                     }
                 } catch (Exception ignored) {}
                 updateHeaderStat();

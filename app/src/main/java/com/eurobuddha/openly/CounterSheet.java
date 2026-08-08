@@ -222,7 +222,7 @@ public class CounterSheet extends Dialog {
                 // and I want `theyPut` from a taker. Odds youPut:theyPut.
                 final String fnonce = nonce;
                 act.txn.post(bet.proposition, mySide, youPut, theyPut,
-                        bet.arbpk, bet.arbaddr, bet.arbcommsid, bet.timeout, bet.settleblock, nonce,
+                        bet.arbpk, bet.arbaddr, bet.arbcommsid, bet.timeout, bet.settleblock, nonce, bet.tokenid,
                         new OpenlyTxn.Done() {
                             public void ok() {
                                 Sfx.lock();

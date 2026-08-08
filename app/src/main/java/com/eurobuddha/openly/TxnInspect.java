@@ -65,7 +65,11 @@ public class TxnInspect {
             io.coinid = c.optString("coinid", "");
             io.address = c.optString("address", "");
             io.tokenid = c.optString("tokenid", "0x00");
-            try { io.amount = Num.of(c.optString("amount", "0")); } catch (Exception e) { io.amount = BigDecimal.ZERO; }
+            // Token coins carry their human value in `tokenamount` (raw `amount` is ~1e-37); native 0x00
+            // has no tokenamount so `amount` is the value. Match on the value the contract compares.
+            String ta = c.optString("tokenamount", "");
+            try { io.amount = Num.of(!ta.isEmpty() ? ta : c.optString("amount", "0")); }
+            catch (Exception e) { io.amount = BigDecimal.ZERO; }
             io.storestate = c.optBoolean("storestate", c.optBoolean("keepstate", false));
             into.add(io);
         }

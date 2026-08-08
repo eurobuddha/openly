@@ -7,8 +7,17 @@ import java.math.BigDecimal;
 public final class Util {
 
     public static final String MINIMA_TOKENID = "0x00";
+    /** AtomiX's bridged USDT token (8dp) — the second currency an Openly bet can be denominated in. */
+    public static final String MXUSDT_TOKENID = "0x7D39745FBD29049BE29850B55A18BF550E4D442F930F86266E34193D89042A90";
 
     private Util() {}
+
+    /** Short currency label for a bet's tokenid — "Minima" / "mxUSDT" / a shortened id. */
+    public static String tokenLabel(String tokenid) {
+        if (isMinima(tokenid)) return "Minima";
+        if (MXUSDT_TOKENID.equalsIgnoreCase(tokenid)) return "mxUSDT";
+        return shorten(tokenid);
+    }
 
     /** A Minima address: 0x + exactly 64 hex (32-byte script hash), or Mx + 40–118 alnum.
      *  Matches the dapp's validateAddress; a pre-filter before the node's checkaddress. */

@@ -29,8 +29,9 @@ public class CreateView extends BaseView {
     private EditText propIn, stakeIn, wantIn, arbPkIn, arbAddrIn, arbCommsIn;
     private int side = 1;
     private TextView sideTrue, sideFalse, escrowCap, oddsCap, statusTv;
-    private TextView cta, arbToggle;
+    private TextView cta, arbToggle, tokMinima, tokUsdt;
     private boolean useDefaultArb;
+    private String betToken = Util.MINIMA_TOKENID;
     private int timeout = 200;
 
     private boolean lastDark;
@@ -94,8 +95,22 @@ public class CreateView extends BaseView {
         col.addView(toggle);
         paintSide();
 
+        // currency toggle — a bet is denominated in Minima OR mxUSDT (both settle on the same contract).
+        TextView cl = Ui.label(act, "Currency");
+        Ui.topMargin(cl, Ui.dp(act, 14));
+        col.addView(cl);
+        LinearLayout ctoggle = Ui.row(act);
+        Ui.topMargin(ctoggle, Ui.dp(act, 6));
+        tokMinima = tokSeg("Minima", Util.MINIMA_TOKENID);
+        tokUsdt = tokSeg("mxUSDT", Util.MXUSDT_TOKENID);
+        LinearLayout.LayoutParams cw1 = Ui.weight(1); cw1.rightMargin = Ui.dp(act, 6);
+        ctoggle.addView(tokMinima, cw1);
+        ctoggle.addView(tokUsdt, Ui.weight(1));
+        col.addView(ctoggle);
+        paintToken();
+
         stakeIn = input("10", InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        field(col, "My stake (MINIMA)", stakeIn);
+        field(col, "My stake", stakeIn);
         escrowCap = Ui.money(act, "", Design.GOLD(), 12, false);
         Ui.topMargin(escrowCap, Ui.dp(act, 4));
         col.addView(escrowCap);
@@ -170,6 +185,25 @@ public class CreateView extends BaseView {
         sideFalse.setBackground(Design.stroked(act, !t ? Design.FALSE_SOFT() : Design.SURFACE2(),
                 !t ? Design.FALSE_C() : Design.BORDER(), 14));
         sideFalse.setTextColor(!t ? Design.FALSE_C() : Design.DIM());
+    }
+
+    private TextView tokSeg(String txt, String tokenid) {
+        TextView t = Ui.text(act, txt, Design.TEXT(), 14, true);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(0, Ui.dp(act, 12), 0, Ui.dp(act, 12));
+        Design.pressable(t);
+        t.setOnClickListener(v -> { betToken = tokenid; paintToken(); updateCaptions(); });
+        return t;
+    }
+
+    private void paintToken() {
+        boolean m = Util.isMinima(betToken);
+        tokMinima.setBackground(Design.stroked(act, m ? Design.ACCENT_SOFT() : Design.SURFACE2(),
+                m ? Design.ACCENT() : Design.BORDER(), 14));
+        tokMinima.setTextColor(m ? Design.ACCENT() : Design.DIM());
+        tokUsdt.setBackground(Design.stroked(act, !m ? Design.GOLD_SOFT() : Design.SURFACE2(),
+                !m ? Design.GOLD() : Design.BORDER(), 14));
+        tokUsdt.setTextColor(!m ? Design.GOLD() : Design.DIM());
     }
 
     /** Paint + apply the default-arbiter toggle: ON fills the three fields with eurobuddha's values and
@@ -250,7 +284,7 @@ public class CreateView extends BaseView {
                 String nonce = r.optJSONObject("response") != null
                         ? r.optJSONObject("response").optString("random", "") : "";
                 if (nonce.isEmpty()) { fail("nonce failed"); cta.setEnabled(true); return; }
-                act.txn.post(prop, side, fStake, fWant, arbpk, arbaddr, arbcommsid, timeout, 0, nonce,
+                act.txn.post(prop, side, fStake, fWant, arbpk, arbaddr, arbcommsid, timeout, 0, nonce, betToken,
                         new OpenlyTxn.Done() {
                             public void ok() {
                                 Sfx.lock();

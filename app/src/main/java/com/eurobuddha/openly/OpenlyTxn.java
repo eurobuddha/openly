@@ -48,7 +48,7 @@ public class OpenlyTxn {
      */
     public void post(String proposition, int side, BigDecimal stake, BigDecimal wantstake,
                      String arbpk, String arbaddr, String arbcommsid, int timeout, int settleblock,
-                     String nonce, Done done) {
+                     String nonce, String tokenid, Done done) {
         BigDecimal lock = Num.lock(stake);
         BigDecimal wlock = Num.lock(wantstake);
         JSONObject st = new JSONObject();
@@ -72,7 +72,7 @@ public class OpenlyTxn {
         } catch (Exception e) { done.fail("state build failed"); return; }
 
         final String cmd = "send amount:" + Num.plain(lock) + " address:" + OpenlyContract.ADDR
-                + " state:" + st.toString();
+                + tok(tokenid) + " state:" + st.toString();
         SignGate.submit(gate -> node.cmd(cmd, new NodeApi.Cb() {
             public void onResult(JSONObject r) {
                 gate.free();
@@ -100,7 +100,9 @@ public class OpenlyTxn {
             st.put(String.valueOf(DISPUTE_NONCE_PORT), bet.nonce);
             st.put(String.valueOf(DISPUTE_TAG_PORT), DISPUTE_TAG);
         } catch (Exception e) { done.fail("marker build failed"); return; }
-        final String cmd = "send amount:0.000000001 address:" + bet.arbaddr + " state:" + st.toString();
+        // Marker in the BET's token (amount = 1 smallest 8dp unit, valid for Minima and mxUSDT), so an
+        // mxUSDT-only holder can still raise a dispute. The arbiter scans by address + reads port 50.
+        final String cmd = "send amount:0.00000001 address:" + bet.arbaddr + tok(bet.tokenid) + " state:" + st.toString();
         SignGate.submit(gate -> node.cmd(cmd, new NodeApi.Cb() {
             public void onResult(JSONObject r) {
                 gate.free();
@@ -119,7 +121,7 @@ public class OpenlyTxn {
         cmds.add("txncreate id:" + txid);
         cmds.add("txninput id:" + txid + " coinid:" + bet.coinid);
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(bet.amount)
-                + " address:" + bet.owneraddr + " storestate:false");
+                + " address:" + bet.owneraddr + tok(bet.tokenid) + " storestate:false");
         // owner-sign with the exact key stored in the coin (port 0)
         cmds.add("txnsign id:" + txid + " publickey:" + bet.ownerpk);
         cmds.add("txnbasics id:" + txid);
@@ -149,7 +151,7 @@ public class OpenlyTxn {
         // Standard wallet coin-selection — the same as AtomiX's responder.selectCoins (proven on the
         // mxUSDT leg): enumerate my CONFIRMED spendable Minima coins (coinage:1, NO depth cap — the bulk
         // of a wallet lives in older coins), largest-first → fewest inputs, take until the lock is covered.
-        node.cmd("coins relevant:true sendable:true tokenid:0x00 coinage:1", new NodeApi.Cb() {
+        node.cmd("coins relevant:true sendable:true tokenid:" + betTok(bet) + " coinage:1", new NodeApi.Cb() {
             public void onResult(JSONObject r) {
                 JSONArray arr = r.optJSONArray("response");
                 java.util.List<JSONObject> cs = new java.util.ArrayList<>();
@@ -208,10 +210,10 @@ public class OpenlyTxn {
         for (String cid : fundIds)                                          // wallet funding inputs (multi-coin)
             cmds.add("txninput id:" + txid + " coinid:" + cid);
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(pot)
-                + " address:" + OpenlyContract.ADDR + " storestate:true");
+                + " address:" + OpenlyContract.ADDR + tok(bet.tokenid) + " storestate:true");
         if (change.compareTo(new BigDecimal("0.000000001")) > 0) {
             cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(change)
-                    + " address:" + changeAddr + " storestate:false");
+                    + " address:" + changeAddr + tok(bet.tokenid) + " storestate:false");
         }
         // state: pin owner region 0–11, phase→1, my identity 13/14/16, 15=@AMOUNT, 17=0
         cmds.add(st(txid, 0, bet.ownerpk));
@@ -253,9 +255,25 @@ public class OpenlyTxn {
         return "txnstate id:" + txid + " port:" + port + " value:" + val;
     }
 
-    /** Coin amount as BigDecimal, 0 on any parse issue — for sorting/summing candidate funding coins. */
+    /** A coin's spendable VALUE as BigDecimal, 0 on any parse issue. A token coin reports its human value
+     *  in `tokenamount` (its `amount` is the coloured raw-Minima ~1e-37 — reading it breaks selection);
+     *  a native 0x00 coin has no tokenamount, so `amount` IS the value. */
     private static BigDecimal coinAmt(JSONObject c) {
-        try { return Num.of(c.optString("amount", "0")); } catch (Exception e) { return BigDecimal.ZERO; }
+        try {
+            String ta = c.optString("tokenamount", "");
+            return Num.of(!ta.isEmpty() ? ta : c.optString("amount", "0"));
+        } catch (Exception e) { return BigDecimal.ZERO; }
+    }
+
+    /** Explicit `tokenid:` clause for a value output/send — always set it (an omitted tokenid defaults to
+     *  0x00, which fails VERIFYOUT(... @TOKENID ...) when the bet coin is a token like mxUSDT). */
+    private static String tok(String tokenid) {
+        return " tokenid:" + (tokenid == null || tokenid.isEmpty() ? "0x00" : tokenid);
+    }
+
+    /** A bet's tokenid value (never null/empty), for a `coins tokenid:` filter. */
+    private static String betTok(Bet b) {
+        return b == null || b.tokenid == null || b.tokenid.isEmpty() ? "0x00" : b.tokenid;
     }
 
     /** Prune inflight reservations to coins still sendable (drops spent ones). Called each block. */
@@ -264,7 +282,9 @@ public class OpenlyTxn {
     /** Query sendable coinids and prune inflight to them (a spent funding coin is released). */
     public void refreshInflight() {
         if (inflightCoins.isEmpty()) return;   // nothing reserved → skip the (possibly large) query
-        node.cmd("coins sendable:true tokenid:0x00 depth:400", new NodeApi.Cb() {
+        // No tokenid filter — reservations can be Minima OR mxUSDT funding coins; a token filter would
+        // wrongly "release" a still-reserved coin of the other token.
+        node.cmd("coins sendable:true depth:400", new NodeApi.Cb() {
             public void onResult(JSONObject r) {
                 java.util.Set<String> present = ConcurrentHashMap.newKeySet();
                 JSONArray arr = r.optJSONArray("response");
@@ -293,9 +313,9 @@ public class OpenlyTxn {
         cmds.add("txncreate id:" + txid);
         cmds.add("txninput id:" + txid + " coinid:" + bet.coinid);
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(os)
-                + " address:" + bet.owneraddr + " storestate:false");
+                + " address:" + bet.owneraddr + tok(bet.tokenid) + " storestate:false");
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(counterPart)
-                + " address:" + bet.counteraddr + " storestate:false");
+                + " address:" + bet.counteraddr + tok(bet.tokenid) + " storestate:false");
         cmds.add("txnstate id:" + txid + " port:20 value:3");
         cmds.add("txnscript id:" + txid + " scripts:" + scripts);
         cmds.add("txnbasics id:" + txid);
@@ -322,7 +342,7 @@ public class OpenlyTxn {
         cmds.add("txncreate id:" + txid);
         cmds.add("txninput id:" + txid + " coinid:" + bet.coinid);
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(bet.amount)
-                + " address:" + OpenlyContract.ADDR + " storestate:true");
+                + " address:" + OpenlyContract.ADDR + tok(bet.tokenid) + " storestate:true");
         // preserve ports 0–16; phase 1 bumps refreshcount and needs the MAST leaf + port 20
         if (bet.phase == 1) {
             cmds.add(st(txid, 17, String.valueOf(bet.refreshcount + 1)));
@@ -369,9 +389,9 @@ public class OpenlyTxn {
         cmds.add("txncreate id:" + txid);
         cmds.add("txninput id:" + txid + " coinid:" + bet.coinid);
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(winnings)
-                + " address:" + winnerAddr + " storestate:false");
+                + " address:" + winnerAddr + tok(bet.tokenid) + " storestate:false");
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(fee)
-                + " address:" + bet.arbaddr + " storestate:false");
+                + " address:" + bet.arbaddr + tok(bet.tokenid) + " storestate:false");
         cmds.add("txnstate id:" + txid + " port:20 value:" + outcome);
         cmds.add("txnsign id:" + txid + " publickey:" + bet.arbpk);
         cmds.add("txnbasics id:" + txid);
@@ -408,9 +428,9 @@ public class OpenlyTxn {
         // original Wager MDS's working pattern; the earlier proposer-txnbasics clobbered it.
         cmds.add("txninput id:" + txid + " coinid:" + bet.coinid + " scriptmmr:true");
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(winnerAmt)
-                + " address:" + winnerAddr + " storestate:false");
+                + " address:" + winnerAddr + tok(bet.tokenid) + " storestate:false");
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(loserAmt)
-                + " address:" + loserAddr + " storestate:false");
+                + " address:" + loserAddr + tok(bet.tokenid) + " storestate:false");
         cmds.add("txnstate id:" + txid + " port:20 value:" + outcome);
         // VOID (outcome 2) leaves the main script's self-settle branch (guarded o LTE 1) and resolves
         // via the MAST void leaf — its proof must be attached, and it travels with txnexport to the

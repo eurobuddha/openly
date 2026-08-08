@@ -18,11 +18,11 @@ import com.eurobuddha.comms.SignGate;
  *
  * The 7 checks (from the plan):
  *   1. exactly ONE input, whose coinid == the current on-chain coin for this nonce (my scanner,
- *      never the message), at OpenlyContract.ADDR, tokenid 0x00, and I am a party.
+ *      never the message), at OpenlyContract.ADDR, tokenid == the bet's token, and I am a party.
  *   2. sha3(receivedHex) == the txnsha3 quoted in the proposal.
  *   3. outputs recomputed locally from my coin + the outcome: exactly two, in order
- *      [winner, pot-le] / [loser, le] (or the void pair), amounts string-exact, tokenid 0x00,
- *      storestate=false on both; inputs total == outputs total (zero burn).
+ *      [winner, pot-le] / [loser, le] (or the void pair), amounts string-exact, tokenid == the bet's
+ *      token, storestate=false on both; inputs total == outputs total (zero burn).
  *   4. txn state port 20 == the proposed outcome == what the UI displayed.
  *   5. sign with MY explicit bet key (never publickey:auto) — so my wallet coins can't be conscripted.
  *   6. txncheck gate incl. allsignaturesvalid before posting.
@@ -74,26 +74,27 @@ public class CoSigner {
     private String inspect(JSONObject txnlist, Bet bet, int outcome, Expected exp) {
         TxnInspect t = TxnInspect.of(txnlist);
         if (!t.parsed) return "unparseable txnlist";
-        // check 1: exactly one input, == my coin for this nonce, at ADDR, 0x00
+        // check 1: exactly one input, == my coin for this nonce, at ADDR, in the bet's token
+        final String btok = bet.tokenid == null || bet.tokenid.isEmpty() ? "0x00" : bet.tokenid;
         if (t.inputs.size() != 1) return "expected 1 input, got " + t.inputs.size();
         TxnInspect.IO in = t.inputs.get(0);
         if (!in.coinid.equalsIgnoreCase(bet.coinid)) return "input is not my bet coin";
         if (!in.address.equalsIgnoreCase(OpenlyContract.ADDR)) return "input not at contract address";
-        if (!"0x00".equalsIgnoreCase(in.tokenid)) return "input is not MINIMA";
-        // check 3: exactly two outputs, exact (addr, amount), storestate=false, zero burn
+        if (!btok.equalsIgnoreCase(in.tokenid)) return "input token != bet token";
+        // check 3: exactly two outputs, exact (addr, amount, token), storestate=false, zero burn
         if (t.outputs.size() != 2) return "expected 2 outputs, got " + t.outputs.size();
-        if (!matches(t.outputs.get(0), exp.addr0, exp.amt0)) return "output0 mismatch";
-        if (!matches(t.outputs.get(1), exp.addr1, exp.amt1)) return "output1 mismatch";
+        if (!matches(t.outputs.get(0), exp.addr0, exp.amt0, btok)) return "output0 mismatch";
+        if (!matches(t.outputs.get(1), exp.addr1, exp.amt1, btok)) return "output1 mismatch";
         if (t.totalIn().compareTo(t.totalOut()) != 0) return "burn detected (in!=out)";
         // check 4: state port 20 == outcome
         if (t.outcomePort20 != outcome) return "state outcome != displayed";
         return null;
     }
 
-    private boolean matches(TxnInspect.IO io, String addr, BigDecimal amt) {
+    private boolean matches(TxnInspect.IO io, String addr, BigDecimal amt, String tokenid) {
         return io.address.equalsIgnoreCase(addr)
                 && io.amount.compareTo(amt) == 0
-                && "0x00".equalsIgnoreCase(io.tokenid)
+                && tokenid.equalsIgnoreCase(io.tokenid)
                 && !io.storestate;
     }
 

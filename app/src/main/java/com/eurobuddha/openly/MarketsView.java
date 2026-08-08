@@ -44,7 +44,7 @@ public class MarketsView extends BaseView {
     }
 
     private static class Market {
-        String prop;
+        String prop, tokenid, key;   // key = proposition|tokenid — one card per proposition PER currency
         final List<Bet> yes = new ArrayList<>();
         final List<Bet> no = new ArrayList<>();
     }
@@ -57,9 +57,10 @@ public class MarketsView extends BaseView {
         // board was misleading (looked still-takeable).
         Map<String, Market> markets = new LinkedHashMap<>();
         for (Bet b : act.scanner.open) {
-            String key = b.proposition == null || b.proposition.isEmpty() ? b.coinid : b.proposition;
+            String base = b.proposition == null || b.proposition.isEmpty() ? b.coinid : b.proposition;
+            String key = base + "|" + b.tokenid;   // separate cards for Minima vs mxUSDT on the same prop
             Market m = markets.get(key);
-            if (m == null) { m = new Market(); m.prop = b.proposition; markets.put(key, m); }
+            if (m == null) { m = new Market(); m.prop = b.proposition; m.tokenid = b.tokenid; m.key = key; markets.put(key, m); }
             (b.side == 1 ? m.yes : m.no).add(b);
         }
 
@@ -69,9 +70,9 @@ public class MarketsView extends BaseView {
             return;
         }
         for (Market m : markets.values()) list.addView(marketCard(m));
-        // Drop odds-tracking for propositions no longer on the board (bounded memory).
+        // Drop odds-tracking for markets no longer on the board (bounded memory).
         java.util.Set<String> keysNow = new java.util.HashSet<>();
-        for (Market m : markets.values()) keysNow.add(m.prop == null || m.prop.isEmpty() ? "?" : m.prop);
+        for (Market m : markets.values()) keysNow.add(m.key);
         lastPct.keySet().retainAll(keysNow);
         lastTrueWant.keySet().retainAll(keysNow);
         lastFalseWant.keySet().retainAll(keysNow);
@@ -79,8 +80,16 @@ public class MarketsView extends BaseView {
 
     private View marketCard(Market m) {
         LinearLayout card = Ui.card(act);
-        card.addView(Ui.text(act, m.prop == null || m.prop.isEmpty() ? "Untitled" : m.prop,
-                Design.TEXT(), 15, true));
+        LinearLayout titleRow = Ui.row(act);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = Ui.text(act, m.prop == null || m.prop.isEmpty() ? "Untitled" : m.prop,
+                Design.TEXT(), 15, true);
+        titleRow.addView(title, Ui.weight(1));
+        // Currency chip — a bet is Minima OR mxUSDT; same proposition in each currency is a separate card.
+        boolean mm = Util.isMinima(m.tokenid);
+        titleRow.addView(Ui.chip(act, Util.tokenLabel(m.tokenid),
+                mm ? Design.ACCENT() : Design.GOLD(), mm ? Design.ACCENT_SOFT() : Design.GOLD_SOFT()));
+        card.addView(titleRow);
 
         Bet bestTrue = pickBest(m.yes), bestFalse = pickBest(m.no);
         // "Ask" = the stake the taker of that side must put up (the poster's wantstake).
@@ -96,7 +105,7 @@ public class MarketsView extends BaseView {
         float pct = total <= 0 ? 0.5f : trueAsk.floatValue() / total;
         // Animate the split only when it actually moved since the last render (not every block rebuild),
         // so the OddsBar rebalance reads as a real change, not constant motion.
-        String key = m.prop == null || m.prop.isEmpty() ? "?" : m.prop;
+        String key = m.key;
         Float prev = lastPct.get(key);
         boolean animate = prev != null && Math.abs(prev - pct) > 0.01f;
         lastPct.put(key, pct);
@@ -195,7 +204,7 @@ public class MarketsView extends BaseView {
         LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(Ui.dp(act, 14), Ui.dp(act, 14));
         blp.rightMargin = Ui.dp(act, 6);
         byRow.addView(badge, blp);
-        byRow.addView(Ui.money(act, "in " + Num.plain(stake) + " M  ·  "
+        byRow.addView(Ui.money(act, "in " + Num.plain(stake) + "  ·  "
                 + (b.isMine ? "you" : Util.shorten(b.ownerpk)), Design.DIM2(), 11, false));
         col.addView(byRow);
         return col;

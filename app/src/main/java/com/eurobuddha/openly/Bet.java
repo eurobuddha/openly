@@ -18,6 +18,7 @@ import java.util.Set;
 public class Bet {
 
     public String coinid;
+    public String tokenid = "0x00";  // the currency this bet is denominated in (0x00 Minima / mxUSDT / …)
     public String nonce;             // port 9 — stable id across refresh
     public int phase;                // port 12: 0 open, 1 matched
     public BigDecimal amount;        // @AMOUNT = owner lock (phase 0) or full pot (phase 1)
@@ -40,6 +41,7 @@ public class Bet {
     public static Bet from(BetCoin c, Set<String> myKeys, int tipBlock) {
         Bet b = new Bet();
         b.coinid = c.coinid;
+        b.tokenid = c.tokenid;
         b.amount = safe(c.amount);
         b.ownerpk = c.at(0);
         b.owneraddr = c.at(1);
