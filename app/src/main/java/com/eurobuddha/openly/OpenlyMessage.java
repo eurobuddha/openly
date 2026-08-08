@@ -19,6 +19,7 @@ public class OpenlyMessage {
     public static final String SETTLE_ACCEPT  = "SETTLE_ACCEPT";
     public static final String SETTLE_REJECT  = "SETTLE_REJECT";
     public static final String DISPUTE        = "DISPUTE";
+    public static final String DISPUTE_WITHDRAW = "DISPUTE_WITHDRAW";  // caller retracts an arbiter summons
     public static final String ARB_RESULT     = "ARB_RESULT";
     public static final String CHAT           = "CHAT";          // per-bet chat; text in `statement`
 

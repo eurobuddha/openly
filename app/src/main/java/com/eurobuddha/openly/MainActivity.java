@@ -123,6 +123,13 @@ public class MainActivity extends AppCompatActivity {
         identity = new Identity(this, node);
         txn = new OpenlyTxn(node, identity);
         db = new OpenlyDb(this);
+        // Persist disputes + "arbiter called" across the marker's depth window and app restarts (db meta).
+        scanner.setDisputeStore(new BetScanner.DisputeStore() {
+            public java.util.Set<String> load() { return csvToSet(db.getMeta("disputes", "")); }
+            public void save(java.util.Set<String> nonces) { db.setMeta("disputes", setToCsv(nonces)); }
+        });
+        arbiterCalled.addAll(csvToSet(db.getMeta("arbcalled", "")));
+        scanner.withdrawnNonces.addAll(csvToSet(db.getMeta("withdrawn", "")));
         comms = new OpenlyComms(this, node, db, this::onCommsMessage);
         settle = new SettleEngine(this);
         auto = new AutoProcessor(this, scanner, txn);
@@ -166,6 +173,21 @@ public class MainActivity extends AppCompatActivity {
         boolean fresh = db.insertMessageIfNew(m, true);
         if (fresh) {
             if (OpenlyMessage.SETTLE_PROPOSE.equals(m.type)) settle.onInboundPropose(m);
+            else if (OpenlyMessage.SETTLE_REJECT.equals(m.type)) {
+                // The counterparty summoned the arbiter — flip me to AT ARBITER too, and tell me.
+                setArbiterCalled(m.ref, true);
+                ui.post(() -> toast("The other side called the arbiter — awaiting their decision"));
+            } else if (OpenlyMessage.DISPUTE_WITHDRAW.equals(m.type)) {
+                // A party withdrew. Party side: back to self-settle. Arbiter side: disarm — suppress this
+                // nonce so the durable union can't re-show it as resolvable.
+                setArbiterCalled(m.ref, false);
+                if (scanner != null && m.ref != null) {
+                    scanner.withdrawnNonces.add(m.ref);
+                    scanner.disputedNonces.remove(m.ref);
+                    db.setMeta("withdrawn", setToCsv(scanner.withdrawnNonces));
+                }
+                ui.post(() -> toast("Arbiter withdrawn — settle it directly again"));
+            }
             ui.post(this::refreshCurrent);
         }
         return fresh;
@@ -279,6 +301,7 @@ public class MainActivity extends AppCompatActivity {
         detectExternalSettlements();
         autoSettleAgreed();
         checkPendingPosts();
+        reconcileArbiterSets();
         BaseView v = pagerAdapter.viewAt(pager.getCurrentItem());
         v.refresh();
     }
@@ -407,12 +430,48 @@ public class MainActivity extends AppCompatActivity {
         String amount = (net.signum() >= 0 ? "+" : "−") + Num.plain(net.abs());
         db.addHistory(b.nonce, b.proposition, result, amount, mySide, path,
                 Num.plain(in), Num.plain(out), System.currentTimeMillis());
+        clearArbiterState(b.nonce);         // terminal → drop persisted AT-ARBITER + withdrawn flags
+    }
+
+    /** Each scan, prune the persisted dispute/withdrawn sets to still-matched bets — so a settled case
+     *  doesn't linger in meta once the arbiter has no live case left (finishDisputes stops running then). */
+    private void reconcileArbiterSets() {
+        if (scanner == null || db == null) return;
+        java.util.Set<String> live = new java.util.HashSet<>();
+        for (Bet b : scanner.matched) if (b.nonce != null) live.add(b.nonce);
+        if (scanner.disputedNonces.retainAll(live)) db.setMeta("disputes", setToCsv(scanner.disputedNonces));
+        if (scanner.withdrawnNonces.retainAll(live)) db.setMeta("withdrawn", setToCsv(scanner.withdrawnNonces));
+    }
+
+    /** Drop all per-nonce arbiter bookkeeping (persisted) once a bet reaches a terminal state. */
+    private void clearArbiterState(String nonce) {
+        setArbiterCalled(nonce, false);
+        if (scanner != null && nonce != null && scanner.withdrawnNonces.remove(nonce))
+            db.setMeta("withdrawn", setToCsv(scanner.withdrawnNonces));
     }
 
     // Nonces for which I've summoned the arbiter this session → the live card shows "AT ARBITER".
     private final java.util.Set<String> arbiterCalled = new java.util.HashSet<>();
-    public void markArbiterCalled(String nonce) { if (nonce != null && !nonce.isEmpty()) arbiterCalled.add(nonce); }
+    public void markArbiterCalled(String nonce) { setArbiterCalled(nonce, true); }
     public boolean isArbiterCalled(String nonce) { return nonce != null && arbiterCalled.contains(nonce); }
+    /** Set/clear AT-ARBITER for a bet and persist it (survives restart; used by both the caller and the
+     *  counterparty on SETTLE_REJECT, and cleared on withdraw). */
+    public void setArbiterCalled(String nonce, boolean on) {
+        if (nonce == null || nonce.isEmpty()) return;
+        if (on) arbiterCalled.add(nonce); else arbiterCalled.remove(nonce);
+        if (db != null) db.setMeta("arbcalled", setToCsv(arbiterCalled));
+    }
+
+    private static java.util.Set<String> csvToSet(String csv) {
+        java.util.Set<String> s = new java.util.HashSet<>();
+        if (csv != null) for (String p : csv.split(",")) { String t = p.trim(); if (!t.isEmpty()) s.add(t); }
+        return s;
+    }
+    private static String setToCsv(java.util.Set<String> s) {
+        StringBuilder b = new StringBuilder();
+        for (String x : s) { if (b.length() > 0) b.append(','); b.append(x); }
+        return b.toString();
+    }
 
     // My committed envelope pick per bet (0/1/2) → survives the per-block card rebuild so a torn-open
     // reveal + its Settle/Call action isn't reset every ~50s.
@@ -647,6 +706,7 @@ public class MainActivity extends AppCompatActivity {
         java.math.BigDecimal lock = Payouts.myLock(b);
         db.addHistory(b.nonce, b.proposition, 5 /*SETTLED, outcome unknown*/, "?", Payouts.mySide(b),
                 "SETTLED", Num.plain(lock), Num.plain(lock), System.currentTimeMillis());
+        clearArbiterState(b.nonce);   // terminal → drop persisted arbiter flags even on the unknown path
         toast("A bet settled — check History");
     }
 

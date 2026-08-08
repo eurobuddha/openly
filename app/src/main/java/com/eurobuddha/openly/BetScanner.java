@@ -40,6 +40,9 @@ public class BetScanner {
     private final Set<String> pendingMatched = new HashSet<>();
     /** Nonces flagged disputed via an on-chain marker at my payout address (I am the arbiter). */
     public final Set<String> disputedNonces = new HashSet<>();
+    /** Nonces a party WITHDREW from arbitration — the arbiter must not resolve these even though the
+     *  on-chain marker still exists. Seeded/persisted by MainActivity; subtracted in finishDisputes. */
+    public final Set<String> withdrawnNonces = new HashSet<>();
 
     /** Persists disputed nonces so a dispute survives the marker aging past the scan depth AND an app
      *  restart (backed by db meta in MainActivity). A dispute is a permanent fact until the bet settles. */
@@ -175,7 +178,7 @@ public class BetScanner {
         final int[] pending = { addrs.size() };
         for (final String addr : addrs) {
             if (addr == null || addr.isEmpty()) { finishDisputes(pending, found); continue; }
-            node.cmd("coins address:" + addr + " depth:400", new NodeApi.Cb() {
+            node.cmd("coins address:" + addr + " depth:400 megammr:true", new NodeApi.Cb() {
                 public void onResult(JSONObject r) {
                     JSONArray arr = r.optJSONArray("response");
                     if (arr != null) {
@@ -193,11 +196,21 @@ public class BetScanner {
         }
     }
 
-    /** Commit the merged dispute set only after every address scan has returned. */
+    /** Commit the merged dispute set only after every address scan has returned. A dispute, once raised,
+     *  stays until the bet settles: the marker coin can age past the scan depth, so UNION freshly-found
+     *  markers with what we already knew (incl. persisted), then prune to nonces whose bet is still
+     *  matched (a resolved bet leaves `matched`). Persist so it survives the depth window AND a restart. */
     private void finishDisputes(int[] pending, Set<String> found) {
         synchronized (pending) { if (--pending[0] > 0) return; }
+        Set<String> durable = new HashSet<>(found);
+        durable.addAll(disputedNonces);
+        Set<String> live = new HashSet<>();
+        for (Bet b : matched) if (b.nonce != null) live.add(b.nonce);
+        durable.retainAll(live);
+        durable.removeAll(withdrawnNonces);   // a withdrawn dispute is disarmed — arbiter must not resolve it
         disputedNonces.clear();
-        disputedNonces.addAll(found);
+        disputedNonces.addAll(durable);
+        if (disputeStore != null) disputeStore.save(durable);
     }
 
     /** I just accepted/filled this bet — hide its open coin immediately until the phase-1 coin lands. */

@@ -154,6 +154,17 @@ public class MyBetsView extends BaseView {
                     + "winner is paid and the arbiter takes 10%.", Design.DIM(), 12, false);
             Ui.topMargin(note, Ui.dp(act, 12));
             card.addView(note);
+            // Not a one-way trap: either side can withdraw and go back to settling it directly (0% fee).
+            TextView withdraw = Ui.button(act, "Withdraw — settle it ourselves", Design.SURFACE2(), Design.DIM(), false);
+            Ui.topMargin(withdraw, Ui.dp(act, 10));
+            withdraw.setOnClickListener(v -> {
+                withdraw.setEnabled(false);
+                act.settle.withdraw(b, new SettleEngine.Cb() {
+                    public void ok() { act.setArbiterCalled(b.nonce, false); act.toast("Withdrawn — settle directly"); act.refreshCurrent(); }
+                    public void fail(String m) { withdraw.setEnabled(true); act.toast("Withdraw failed: " + m); }
+                });
+            });
+            card.addView(withdraw);
             addChat(card, b);
             return card;
         }

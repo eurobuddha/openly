@@ -138,6 +138,21 @@ public class SettleEngine {
         });
     }
 
+    /** Withdraw a dispute: tell the counterparty (comms) so both sides return to self-settle. The
+     *  on-chain marker is left harmless — it prunes from the arbiter's view once the bet settles. */
+    public void withdraw(Bet bet, Cb cb) {
+        long now = System.currentTimeMillis();
+        OpenlyMessage w = base(bet, OpenlyMessage.DISPUTE_WITHDRAW, theirCommsId(bet), now);
+        comms.send(w.to, w, noop());
+        // Also tell the ARBITER to stand down — else their rule buttons stay live (the on-chain marker
+        // can't be un-sent), and they could still resolve + take 10% during the self-settle window.
+        if (bet.arbcommsid != null && !bet.arbcommsid.isEmpty() && !"0".equals(bet.arbcommsid)) {
+            OpenlyMessage wa = base(bet, OpenlyMessage.DISPUTE_WITHDRAW, bet.arbcommsid, now);
+            comms.send(wa.to, wa, noop());
+        }
+        cb.ok();
+    }
+
     private OpenlyMessage base(Bet bet, String type, String to, long now) {
         OpenlyMessage m = new OpenlyMessage();
         m.type = type; m.ref = bet.nonce; m.to = to; m.date = now; m.coinid = bet.coinid;
