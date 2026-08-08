@@ -30,6 +30,15 @@ public final class OpenlyContract {
     // Shared comms channel address = hex("OPENLY") — small/rare messages (dispute, notify).
     public static final String MAIL_ADDR = "0x4F50454E4C59";
 
+    // Default arbiter "eurobuddha" — the app author, a known/trusted always-on arbiter offered as a
+    // one-tap default on POST. pk→port 2, addr→port 3, commsid→port 11 (enables arbiter chat).
+    public static final String EUROBUDDHA_ARB_PK =
+        "0x0665024EC8F399D0F956285BCC0670C216CFCD06249F0B4B3C1E634952B56210";
+    public static final String EUROBUDDHA_ARB_ADDR =
+        "0x7AF14182BCFEC7F512D7E22262D6DE47D322F75E6E3EF0F7289E778A90382E12";
+    public static final String EUROBUDDHA_ARB_COMMSID =
+        "0x586e9cb87d89ecdd963e115ae072a6d217389284a9e9bd860ec3c1dc5d6aaf008e1aff7d1b4f916c07f37a3f2cd24f2585eb06b975067940d23b302090c759b5";
+
     /**
      * Per-bet SETTLEMENT mailbox: the bet nonce itself (a 32-byte value both parties read from the
      * matched coin's port 9). The heavy signed settlement blob is posted to THIS address, not the

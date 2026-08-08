@@ -42,6 +42,7 @@ public class ArbiterView extends BaseView {
     @Override public void refresh() {
         list.removeAllViews();
         list.addView(identityCard());
+        list.addView(eurobuddhaCard());
 
         // Only DISPUTED cases get resolve buttons — resolving a bet the parties would settle for free
         // would wrongly take the 10% fee + the loser's escrow. Non-disputed matched bets I arbitrate
@@ -115,6 +116,28 @@ public class ArbiterView extends BaseView {
             ClipboardManager cm = (ClipboardManager) act.getSystemService(Context.CLIPBOARD_SERVICE);
             cm.setPrimaryClip(ClipData.newPlainText("openly-arbiter", blob));
             act.toast("Arbiter identity copied");
+        });
+        card.addView(copy);
+        return card;
+    }
+
+    /** The baked-in default arbiter (the app author) — the values the POST toggle uses, copyable. */
+    private View eurobuddhaCard() {
+        LinearLayout card = Ui.card(act);
+        card.setBackground(Design.stroked(act, Design.SURFACE(), Design.GOLD(), 18));
+        card.addView(Ui.text(act, "eurobuddha — default arbiter", Design.GOLD(), 15, true));
+        card.addView(cap("The trusted app author, offered as the one-tap default when you post a bet."));
+        card.addView(kv("Public key", OpenlyContract.EUROBUDDHA_ARB_PK));
+        card.addView(kv("Address", OpenlyContract.EUROBUDDHA_ARB_ADDR));
+        card.addView(kv("Comms id", OpenlyContract.EUROBUDDHA_ARB_COMMSID));
+        TextView copy = Ui.button(act, "Copy identity", Design.SURFACE2(), Design.TEXT(), false);
+        Ui.topMargin(copy, Ui.dp(act, 12));
+        copy.setOnClickListener(v -> {
+            String blob = "pk=" + OpenlyContract.EUROBUDDHA_ARB_PK + "\naddr=" + OpenlyContract.EUROBUDDHA_ARB_ADDR
+                    + "\ncommsid=" + OpenlyContract.EUROBUDDHA_ARB_COMMSID;
+            ClipboardManager cm = (ClipboardManager) act.getSystemService(Context.CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText("openly-arbiter", blob));
+            act.toast("eurobuddha arbiter identity copied");
         });
         card.addView(copy);
         return card;

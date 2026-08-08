@@ -29,7 +29,8 @@ public class CreateView extends BaseView {
     private EditText propIn, stakeIn, wantIn, arbPkIn, arbAddrIn, arbCommsIn;
     private int side = 1;
     private TextView sideTrue, sideFalse, escrowCap, oddsCap, statusTv;
-    private TextView cta;
+    private TextView cta, arbToggle;
+    private boolean useDefaultArb;
     private int timeout = 200;
 
     private boolean lastDark;
@@ -105,6 +106,18 @@ public class CreateView extends BaseView {
         Ui.topMargin(oddsCap, Ui.dp(act, 4));
         col.addView(oddsCap);
 
+        // One-tap default arbiter: the trusted author "eurobuddha", or paste your own below.
+        TextView arbHdr = Ui.label(act, "Arbiter");
+        Ui.topMargin(arbHdr, Ui.dp(act, 14));
+        col.addView(arbHdr);
+        arbToggle = Ui.text(act, "", Design.TEXT(), 14, true);
+        arbToggle.setGravity(Gravity.CENTER);
+        arbToggle.setPadding(0, Ui.dp(act, 12), 0, Ui.dp(act, 12));
+        Ui.topMargin(arbToggle, Ui.dp(act, 6));
+        Design.pressable(arbToggle);
+        arbToggle.setOnClickListener(v -> { useDefaultArb = !useDefaultArb; applyArbToggle(); });
+        col.addView(arbToggle);
+
         arbPkIn = input("0x…", InputType.TYPE_CLASS_TEXT);
         field(col, "Arbiter public key", arbPkIn);
         arbAddrIn = input("0x…", InputType.TYPE_CLASS_TEXT);
@@ -117,6 +130,9 @@ public class CreateView extends BaseView {
         arbPkIn.setText(ap.getString("pk", ""));
         arbAddrIn.setText(ap.getString("addr", ""));
         arbCommsIn.setText(ap.getString("commsid", ""));
+        // Default to eurobuddha when nothing sticky is saved yet; otherwise respect the saved arbiter.
+        useDefaultArb = ap.getString("pk", "").isEmpty();
+        applyArbToggle();
 
         TextWatcher w = new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
@@ -154,6 +170,30 @@ public class CreateView extends BaseView {
         sideFalse.setBackground(Design.stroked(act, !t ? Design.FALSE_SOFT() : Design.SURFACE2(),
                 !t ? Design.FALSE_C() : Design.BORDER(), 14));
         sideFalse.setTextColor(!t ? Design.FALSE_C() : Design.DIM());
+    }
+
+    /** Paint + apply the default-arbiter toggle: ON fills the three fields with eurobuddha's values and
+     *  locks them; OFF restores the sticky/paste-your-own state. */
+    private void applyArbToggle() {
+        boolean on = useDefaultArb;
+        if (on) {
+            arbPkIn.setText(OpenlyContract.EUROBUDDHA_ARB_PK);
+            arbAddrIn.setText(OpenlyContract.EUROBUDDHA_ARB_ADDR);
+            arbCommsIn.setText(OpenlyContract.EUROBUDDHA_ARB_COMMSID);
+        } else {
+            android.content.SharedPreferences ap = act.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE);
+            arbPkIn.setText(ap.getString("pk", ""));
+            arbAddrIn.setText(ap.getString("addr", ""));
+            arbCommsIn.setText(ap.getString("commsid", ""));
+        }
+        for (EditText e : new EditText[]{arbPkIn, arbAddrIn, arbCommsIn}) {
+            e.setEnabled(!on);
+            e.setAlpha(on ? 0.45f : 1f);
+        }
+        arbToggle.setText(on ? "✓ eurobuddha — trusted default arbiter" : "Use eurobuddha as arbiter");
+        arbToggle.setBackground(Design.stroked(act, on ? Design.GOLD_SOFT() : Design.SURFACE2(),
+                on ? Design.GOLD() : Design.BORDER(), 14));
+        arbToggle.setTextColor(on ? Design.GOLD() : Design.DIM());
     }
 
     private BigDecimal parse(EditText e) {
