@@ -12,8 +12,15 @@
         <package android:name="org.minimarex.minimacore" />
     </queries>
 
+    <!-- allowBackup=false is a FUND-SAFETY setting here, not a preference. With the scaffold default
+         (true + empty rules) Android Auto Backup uploaded this app's whole data directory to the user's
+         cloud and RESTORED it on reinstall — which both exfiltrates the data below and re-plants state a
+         reinstall is supposed to clear. A reinstall must be a true reset.
+         At stake: proposals.hex — a complete SIGNED settlement transaction that moves the pot, held before the
+         counterparty co-signs — plus openly_identity, a pinned pubkey/address minted once and reused forever.
+         A restore both exfiltrates spend-authorising material and re-plants an unsignable identity -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"

@@ -1,13 +1,17 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   Legacy (API < 31) Auto Backup rules.
+
+   NOTHING in this app may leave the device. allowBackup="false" already disables this, but the excludes are
+   explicit so the intent survives anyone flipping that flag back. What is at stake here:
+   proposals.hex — a complete SIGNED settlement transaction that moves the pot, held before the
+         counterparty co-signs — plus openly_identity, a pinned pubkey/address minted once and reused forever.
+         A restore both exfiltrates spend-authorising material and re-plants an unsignable identity
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="file" path="." />
+    <exclude domain="external" path="." />
+    <exclude domain="root" path="." />
 </full-backup-content>
