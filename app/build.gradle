@@ -4,7 +4,7 @@ plugins {
 
 // versionName = the milestone (0.1.0) + the exact commit sha, so a build always maps back to a commit;
 // versionCode = commit count (monotonic). Bump the milestone by hand at each release.
-def RELEASE = "0.2.0"
+def RELEASE = "0.2.1"
 def gitCount = { ->
     try { return "git rev-list --count HEAD".execute(null, rootDir).text.trim().toInteger() }
     catch (ignored) { return 1 }

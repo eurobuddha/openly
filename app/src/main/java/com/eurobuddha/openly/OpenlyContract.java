@@ -33,11 +33,11 @@ public final class OpenlyContract {
     // Default arbiter "eurobuddha" — the app author, a known/trusted always-on arbiter offered as a
     // one-tap default on POST. pk→port 2, addr→port 3, commsid→port 11 (enables arbiter chat).
     public static final String EUROBUDDHA_ARB_PK =
-        "0x0665024EC8F399D0F956285BCC0670C216CFCD06249F0B4B3C1E634952B56210";
+        "0x5EC3FDFD44CC6088C503054E0EE2DCEB7DCD6C0E9E20818AB1789F30307CEF72";
     public static final String EUROBUDDHA_ARB_ADDR =
-        "0x7AF14182BCFEC7F512D7E22262D6DE47D322F75E6E3EF0F7289E778A90382E12";
+        "0xC6C794C36C0E46E7E4EF681AC2E9E497509A44761BE0858D37E298A16BC81BCF";
     public static final String EUROBUDDHA_ARB_COMMSID =
-        "0x586e9cb87d89ecdd963e115ae072a6d217389284a9e9bd860ec3c1dc5d6aaf008e1aff7d1b4f916c07f37a3f2cd24f2585eb06b975067940d23b302090c759b5";
+        "0xa6db2bf249dd706abb9a32f8937df7ca18899390f4cd38af6548c4139103b232d70eca7f5dc2a77043dd83cb8149ca56443b80bc2c96adf5f1a00fd26a912490";
 
     /**
      * Per-bet SETTLEMENT mailbox: the bet nonce itself (a 32-byte value both parties read from the
