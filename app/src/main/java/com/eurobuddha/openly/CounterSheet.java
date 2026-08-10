@@ -194,6 +194,7 @@ public class CounterSheet extends Dialog {
 
     private void acceptBet(TextView btn) {
         if (act.identityOrphaned) { act.toast("Your node's seed changed — betting is blocked. Reinstall Openly."); return; }
+        if (amArbiter()) { act.toast("You're the arbiter of this bet — you can't also be a player"); return; }
         btn.setEnabled(false);
         act.txn.fill(bet, new OpenlyTxn.Done() {
             public void ok() {
@@ -205,8 +206,15 @@ public class CounterSheet extends Dialog {
         });
     }
 
+    /** The contract forbids the arbiter from being a party (ASSERT ak NEQ ok / ak NEQ counter). Guard it
+     *  in the UI — e.g. the eurobuddha node itself must not accept/counter a bet it's the default arbiter of. */
+    private boolean amArbiter() {
+        return act.identity != null && bet.arbpk != null && bet.arbpk.equalsIgnoreCase(act.identity.pubkey);
+    }
+
     private void postCounter() {
         if (act.identityOrphaned) { statusFail("Your node's seed changed — betting is blocked. Reinstall Openly."); return; }
+        if (amArbiter()) { statusFail("You're the arbiter of this bet — you can't also be a player"); return; }
         final BigDecimal youPut = parse(youPutIn), theyPut = parse(theyPutIn);
         if (!Num.validStake(youPut)) { statusFail("Your stake must be ≥ 0.1 in 0.01 steps"); return; }
         if (!Num.validStake(theyPut)) { statusFail("Their stake must be ≥ 0.1 in 0.01 steps"); return; }

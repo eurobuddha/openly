@@ -263,6 +263,10 @@ public class CreateView extends BaseView {
         if (!Num.validStake(stake)) { fail("Stake must be ≥ 0.1 in 0.01 steps"); return; }
         if (!Num.validStake(want)) { fail("They-must-stake must be ≥ 0.1 in 0.01 steps"); return; }
         if (!Util.isValidAddress(arbpk) || !Util.isValidAddress(arbaddr)) { fail("Enter valid arbiter key + address"); return; }
+        // The contract forbids the arbiter being a party — don't let a node name itself as arbiter.
+        if (act.identity != null && arbpk.equalsIgnoreCase(act.identity.pubkey)) {
+            fail("You can't be your own arbiter — pick someone else (or the eurobuddha default)"); return;
+        }
         // A real comms id is boxPk‖signPk = 64 bytes → 0x + 128 hex. Require the full width so a
         // truncated paste can't pin a value that silently fails arbiter-chat auth on the parties.
         if (!arbcommsid.isEmpty() && !arbcommsid.matches("^0x[0-9a-fA-F]{128,}$")) {

@@ -206,9 +206,13 @@ public class OpenlyTxn {
         BigDecimal change = Num.sub(fundSum, need);
         List<String> cmds = new ArrayList<>();
         cmds.add("txncreate id:" + txid);
-        cmds.add("txninput id:" + txid + " coinid:" + bet.coinid);          // contract coin = input 0
+        // scriptmmr:true attaches each input's MMR proof + script directly. REQUIRED for the contract
+        // coin: the filler's node only coinnotify's the shared contract address and did NOT create that
+        // coin, so txnbasics can't rebuild its proof (→ "0 MMR proofs" rejection). Same pattern as
+        // buildSettle. No txnbasics below — the two must never be combined (duplicate-proof error).
+        cmds.add("txninput id:" + txid + " coinid:" + bet.coinid + " scriptmmr:true");   // contract coin = input 0
         for (String cid : fundIds)                                          // wallet funding inputs (multi-coin)
-            cmds.add("txninput id:" + txid + " coinid:" + cid);
+            cmds.add("txninput id:" + txid + " coinid:" + cid + " scriptmmr:true");
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(pot)
                 + " address:" + OpenlyContract.ADDR + tok(bet.tokenid) + " storestate:true");
         if (change.compareTo(new BigDecimal("0.000000001")) > 0) {
@@ -235,8 +239,7 @@ public class OpenlyTxn {
         cmds.add(st(txid, 16, id.commsId));
         cmds.add(st(txid, 17, "0"));
         cmds.add("txnsign id:" + txid + " publickey:auto");
-        cmds.add("txnbasics id:" + txid);
-        cmds.add("txnpost id:" + txid);
+        cmds.add("txnpost id:" + txid);   // no txnbasics — scriptmmr:true already attached every proof+script
         SignGate.submit(gate -> CmdChain.run(node, cmds, "txndelete id:" + txid, new CmdChain.Done() {
             public void ok(JSONObject last) {
                 gate.free();
@@ -387,15 +390,16 @@ public class OpenlyTxn {
         final String txid = tag("resolve");
         List<String> cmds = new ArrayList<>();
         cmds.add("txncreate id:" + txid);
-        cmds.add("txninput id:" + txid + " coinid:" + bet.coinid);
+        // scriptmmr:true (not txnbasics): the ARBITER never created this coin — their node only
+        // coinnotify's the contract address, so txnbasics can't rebuild the proof. Same as buildSettle.
+        cmds.add("txninput id:" + txid + " coinid:" + bet.coinid + " scriptmmr:true");
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(winnings)
                 + " address:" + winnerAddr + tok(bet.tokenid) + " storestate:false");
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(fee)
                 + " address:" + bet.arbaddr + tok(bet.tokenid) + " storestate:false");
         cmds.add("txnstate id:" + txid + " port:20 value:" + outcome);
         cmds.add("txnsign id:" + txid + " publickey:" + bet.arbpk);
-        cmds.add("txnbasics id:" + txid);
-        cmds.add("txnpost id:" + txid);
+        cmds.add("txnpost id:" + txid);   // no txnbasics — scriptmmr:true attached the proof+script
         SignGate.submit(gate -> CmdChain.run(node, cmds, "txndelete id:" + txid, new CmdChain.Done() {
             public void ok(JSONObject last) {
                 gate.free();
