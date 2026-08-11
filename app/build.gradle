@@ -26,6 +26,21 @@ android {
         versionName RELEASE + "+" + gitSha()
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
+    signingConfigs {
+        // Minima family release key. Credentials come from ~/.gradle/gradle.properties
+        // (outside every repo), so nothing secret is ever committed. On a machine without
+        // those props this config stays empty and release falls back to debug signing.
+        release {
+            def ksFile = project.findProperty('MINIMA_FAMILY_RELEASE_STORE_FILE')
+            if (ksFile != null) {
+                storeFile file(ksFile)
+                storePassword project.findProperty('MINIMA_FAMILY_RELEASE_STORE_PASSWORD')
+                keyAlias project.findProperty('MINIMA_FAMILY_RELEASE_KEY_ALIAS')
+                keyPassword project.findProperty('MINIMA_FAMILY_RELEASE_KEY_PASSWORD')
+            }
+        }
+    }
+
 
     buildTypes {
         release {
@@ -33,7 +48,7 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             // Sign release with the debug keystore (IPC is authorised by the MINIMA_ID token,
             // not by signature — matches the whole companion-app family).
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
         }
     }
     compileOptions {
