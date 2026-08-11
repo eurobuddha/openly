@@ -175,7 +175,10 @@ public class MainActivity extends AppCompatActivity {
         if (fresh) {
             if (OpenlyMessage.SETTLE_PROPOSE.equals(m.type)) settle.onInboundPropose(m);
             else if (OpenlyMessage.SETTLE_REJECT.equals(m.type)) {
-                // The counterparty summoned the arbiter — flip me to AT ARBITER too, and tell me.
+                // Today SETTLE_REJECT means exactly one thing: the counterparty escalated to the arbiter
+                // (self-settle is the only non-arbiter path, so a rejection == a summons). Flip me to AT
+                // ARBITER too and tell me. NOTE: if REJECT is ever reused for "let's renegotiate the
+                // outcome" without the arbiter, split that into its own message type — don't overload this.
                 setArbiterCalled(m.ref, true);
                 ui.post(() -> toast("The other side called the arbiter — awaiting their decision"));
             } else if (OpenlyMessage.DISPUTE_WITHDRAW.equals(m.type)) {

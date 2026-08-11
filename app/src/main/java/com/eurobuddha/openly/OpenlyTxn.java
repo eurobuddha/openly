@@ -314,15 +314,17 @@ public class OpenlyTxn {
         String scripts = mastArg(OpenlyContract.LEAF_TIMEOUT, OpenlyContract.PROOF_TIMEOUT);
         List<String> cmds = new ArrayList<>();
         cmds.add("txncreate id:" + txid);
-        cmds.add("txninput id:" + txid + " coinid:" + bet.coinid);
+        // scriptmmr:true bakes the coin's proof + script directly (same as buildSettle/fill/resolve):
+        // whoever times a bet out may NOT have created the phase-1 coin (the filler did), so their
+        // coinnotify-only node can't rebuild the proof via txnbasics (→ "0 MMR proofs" rejection).
+        cmds.add("txninput id:" + txid + " coinid:" + bet.coinid + " scriptmmr:true");
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(os)
                 + " address:" + bet.owneraddr + tok(bet.tokenid) + " storestate:false");
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(counterPart)
                 + " address:" + bet.counteraddr + tok(bet.tokenid) + " storestate:false");
         cmds.add("txnstate id:" + txid + " port:20 value:3");
-        cmds.add("txnscript id:" + txid + " scripts:" + scripts);
-        cmds.add("txnbasics id:" + txid);
-        cmds.add("txnpost id:" + txid);
+        cmds.add("txnscript id:" + txid + " scripts:" + scripts);   // timeout MAST leaf proof
+        cmds.add("txnpost id:" + txid);   // no txnbasics — scriptmmr:true attached the coin proof+script
         SignGate.submit(gate -> CmdChain.run(node, cmds, "txndelete id:" + txid, new CmdChain.Done() {
             public void ok(JSONObject last) {
                 gate.free();
@@ -343,7 +345,10 @@ public class OpenlyTxn {
         final String txid = tag("refresh");
         List<String> cmds = new ArrayList<>();
         cmds.add("txncreate id:" + txid);
-        cmds.add("txninput id:" + txid + " coinid:" + bet.coinid);
+        // scriptmmr:true bakes the coin's proof + script directly (same as buildSettle/fill/resolve).
+        // Phase 1: the refresher (owner OR counter) may not have created the coin, so txnbasics can't
+        // rebuild the proof on a coinnotify-only node. Also correct for the phase-0 owner relock.
+        cmds.add("txninput id:" + txid + " coinid:" + bet.coinid + " scriptmmr:true");
         cmds.add("txnoutput id:" + txid + " amount:" + Num.plain(bet.amount)
                 + " address:" + OpenlyContract.ADDR + tok(bet.tokenid) + " storestate:true");
         // preserve ports 0–16; phase 1 bumps refreshcount and needs the MAST leaf + port 20
@@ -356,8 +361,7 @@ public class OpenlyTxn {
         } else {
             cmds.add("txnsign id:" + txid + " publickey:" + bet.ownerpk);
         }
-        cmds.add("txnbasics id:" + txid);
-        cmds.add("txnpost id:" + txid);
+        cmds.add("txnpost id:" + txid);   // no txnbasics — scriptmmr:true attached the coin proof+script
         SignGate.submit(gate -> CmdChain.run(node, cmds, "txndelete id:" + txid, new CmdChain.Done() {
             public void ok(JSONObject last) {
                 gate.free();

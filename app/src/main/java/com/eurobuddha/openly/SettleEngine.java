@@ -139,18 +139,29 @@ public class SettleEngine {
     }
 
     /** Withdraw a dispute: tell the counterparty (comms) so both sides return to self-settle. The
-     *  on-chain marker is left harmless — it prunes from the arbiter's view once the bet settles. */
+     *  on-chain marker is left harmless — it prunes from the arbiter's view once the bet settles.
+     *  Withdrawal is advisory only: the marker can't be un-sent, so an arbiter who never receives this
+     *  message (or ignores it) can still rule + take 10% during the self-settle window. So report ok()
+     *  ONLY when the counterparty notification actually dispatched — a silent "success" would tell the
+     *  user they're back to self-settle when the other side was never informed. */
     public void withdraw(Bet bet, Cb cb) {
         long now = System.currentTimeMillis();
-        OpenlyMessage w = base(bet, OpenlyMessage.DISPUTE_WITHDRAW, theirCommsId(bet), now);
-        comms.send(w.to, w, noop());
-        // Also tell the ARBITER to stand down — else their rule buttons stay live (the on-chain marker
-        // can't be un-sent), and they could still resolve + take 10% during the self-settle window.
+        // Best-effort: tell the ARBITER to stand down (their rule buttons otherwise stay live).
         if (bet.arbcommsid != null && !bet.arbcommsid.isEmpty() && !"0".equals(bet.arbcommsid)) {
             OpenlyMessage wa = base(bet, OpenlyMessage.DISPUTE_WITHDRAW, bet.arbcommsid, now);
             comms.send(wa.to, wa, noop());
         }
-        cb.ok();
+        String theirs = theirCommsId(bet);
+        if (theirs == null || theirs.isEmpty() || "0".equals(theirs)) {
+            // No counterparty channel to notify — local state still clears; the marker self-prunes.
+            cb.ok();
+            return;
+        }
+        OpenlyMessage w = base(bet, OpenlyMessage.DISPUTE_WITHDRAW, theirs, now);
+        comms.send(w.to, w, new CommsTransport.SendCb() {
+            public void onSent(String t) { cb.ok(); }
+            public void onFailed(String e) { cb.fail(e == null || e.isEmpty() ? "couldn't reach the other side" : e); }
+        });
     }
 
     private OpenlyMessage base(Bet bet, String type, String to, long now) {

@@ -4,7 +4,7 @@ plugins {
 
 // versionName = the milestone (0.1.0) + the exact commit sha, so a build always maps back to a commit;
 // versionCode = commit count (monotonic). Bump the milestone by hand at each release.
-def RELEASE = "0.2.4"
+def RELEASE = "0.2.5"
 def gitCount = { ->
     try { return "git rev-list --count HEAD".execute(null, rootDir).text.trim().toInteger() }
     catch (ignored) { return 1 }
@@ -26,14 +26,13 @@ android {
         versionName RELEASE + "+" + gitSha()
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
+    // True only when the family release key is configured (props live in ~/.gradle/gradle.properties,
+    // outside every repo, so nothing secret is committed). Drives the debug-signing fallback below.
+    def hasReleaseKey = project.findProperty('MINIMA_FAMILY_RELEASE_STORE_FILE') != null
     signingConfigs {
-        // Minima family release key. Credentials come from ~/.gradle/gradle.properties
-        // (outside every repo), so nothing secret is ever committed. On a machine without
-        // those props this config stays empty and release falls back to debug signing.
         release {
-            def ksFile = project.findProperty('MINIMA_FAMILY_RELEASE_STORE_FILE')
-            if (ksFile != null) {
-                storeFile file(ksFile)
+            if (hasReleaseKey) {
+                storeFile file(project.findProperty('MINIMA_FAMILY_RELEASE_STORE_FILE'))
                 storePassword project.findProperty('MINIMA_FAMILY_RELEASE_STORE_PASSWORD')
                 keyAlias project.findProperty('MINIMA_FAMILY_RELEASE_KEY_ALIAS')
                 keyPassword project.findProperty('MINIMA_FAMILY_RELEASE_KEY_PASSWORD')
@@ -46,9 +45,10 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            // Sign release with the debug keystore (IPC is authorised by the MINIMA_ID token,
-            // not by signature — matches the whole companion-app family).
-            signingConfig signingConfigs.release
+            // Sign with the family release key when its props are present; otherwise fall back to the
+            // debug keystore so a release build still succeeds on a machine without the key. (IPC is
+            // authorised by the MINIMA_ID token, not by signature — matches the companion-app family.)
+            signingConfig hasReleaseKey ? signingConfigs.release : signingConfigs.debug
         }
     }
     compileOptions {
