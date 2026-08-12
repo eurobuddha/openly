@@ -2,12 +2,18 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
-// versionName = the milestone (0.1.0) + the exact commit sha, so a build always maps back to a commit;
-// versionCode = commit count (monotonic). Bump the milestone by hand at each release.
-def RELEASE = "0.2.5"
-def gitCount = { ->
-    try { return "git rev-list --count HEAD".execute(null, rootDir).text.trim().toInteger() }
-    catch (ignored) { return 1 }
+// versionName = the milestone + the exact commit sha, so a build always maps back to a commit.
+// versionCode = minor*100 + patch, derived from RELEASE below — the family convention
+// (0.2.9 -> 209, 0.4.3 -> 403). It used to be the commit count, which was monotonic and never
+// broke, but sat far below where the convention puts it: the first release numbered correctly
+// would then have been a downgrade, which is how Terminal IDE stranded its own numbering.
+// Realigned while the convention value is still an increase. Bump RELEASE by hand each release;
+// the code follows automatically, so the two can no longer disagree.
+def RELEASE = "0.2.6"
+// minor*100 + patch, read straight off RELEASE so the two can never drift apart.
+def releaseCode = { ->
+    def p = RELEASE.tokenize('.')
+    return p[1].toInteger() * 100 + p[2].toInteger()
 }
 def gitSha = { ->
     try { return "git rev-parse --short HEAD".execute(null, rootDir).text.trim() }
@@ -22,7 +28,7 @@ android {
         applicationId "com.eurobuddha.openly"
         minSdk 28
         targetSdk 35
-        versionCode gitCount()
+        versionCode releaseCode()
         versionName RELEASE + "+" + gitSha()
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
