@@ -9,7 +9,7 @@ plugins {
 // would then have been a downgrade, which is how Terminal IDE stranded its own numbering.
 // Realigned while the convention value is still an increase. Bump RELEASE by hand each release;
 // the code follows automatically, so the two can no longer disagree.
-def RELEASE = "0.2.6"
+def RELEASE = "0.2.7"
 // minor*100 + patch, read straight off RELEASE so the two can never drift apart.
 def releaseCode = { ->
     def p = RELEASE.tokenize('.')

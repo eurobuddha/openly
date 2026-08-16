@@ -13,6 +13,7 @@ import android.os.Build;
 import android.os.IBinder;
 
 import androidx.core.app.NotificationCompat;
+import androidx.core.app.ServiceCompat;
 import androidx.core.content.ContextCompat;
 
 import org.json.JSONObject;
@@ -38,7 +39,19 @@ public class OpenlyService extends Service {
 
     @Override public void onCreate() {
         super.onCreate();
-        startForeground(1, buildNotification());
+        try {
+            ServiceCompat.startForeground(this, 1, buildNotification(),
+                    Build.VERSION.SDK_INT >= 29 ? ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC : 0);
+        } catch (Throwable t) {
+            // Android 14/15 refuse startForeground() when it is (re)started from the background, or once
+            // the dataSync daily runtime budget is spent ("Time limit already exhausted"). Left unguarded
+            // this threw out of onCreate → "Openly keeps stopping", and START_STICKY retried it into an
+            // hourly crash loop. Never crash: stop cleanly. Background catch-up is done by
+            // OpenlyRefreshWorker (periodic WorkManager), which is not subject to the FGS time limit.
+            android.util.Log.w("OpenlyService", "startForeground refused; stopping service", t);
+            stopSelf();
+            return;
+        }
         node = new NodeApi(this, enabled -> {});
         identity = new Identity(this, node);
         txn = new OpenlyTxn(node, identity);
@@ -89,7 +102,21 @@ public class OpenlyService extends Service {
                 .build();
     }
 
-    @Override public int onStartCommand(Intent intent, int flags, int startId) { return START_STICKY; }
+    // NOT_STICKY: never let the OS resurrect this from the background (that recreate hits the
+    // startForeground restriction → crash). WorkManager owns durable background catch-up now.
+    @Override public int onStartCommand(Intent intent, int flags, int startId) { return START_NOT_STICKY; }
+
+    /** Android 14 (API 34): the dataSync FGS runtime cap was reached — stop cleanly BEFORE the system
+     *  throws ForegroundServiceDidNotStopInTimeException and crashes us. */
+    @Override public void onTimeout(int startId) { stopCleanly(); }
+
+    /** Android 15 (API 35): same, with the fgsType parameter. */
+    @Override public void onTimeout(int startId, int fgsType) { stopCleanly(); }
+
+    private void stopCleanly() {
+        try { ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE); } catch (Throwable ignored) {}
+        stopSelf();
+    }
 
     @Override public IBinder onBind(Intent intent) { return null; }
 

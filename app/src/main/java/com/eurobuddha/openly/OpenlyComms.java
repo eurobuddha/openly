@@ -97,7 +97,12 @@ public class OpenlyComms {
                     ready = true;
                     if (done != null) done.run();
                 });
-            } catch (Exception e) {
+            } catch (Throwable e) {
+                // Throwable, not Exception: Sodium.get() loads libsodium via JNA and can throw
+                // UnsatisfiedLinkError (an Error, not an Exception) on a device where the .so won't
+                // load (missing ABI / page-alignment). Catching only Exception let that escape on the
+                // io thread → uncaught → app crash at startup. Degrade gracefully instead.
+                android.util.Log.e(TAG, "comms identity init failed (crypto unavailable)", e);
                 ui.post(() -> { if (done != null) done.run(); });
             }
         });

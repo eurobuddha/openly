@@ -165,17 +165,24 @@ public class NodeApi {
                     mConsecTimeouts = 0;
                     if (dead()) return;   // cleaned up above; just don't touch dead views
 
-                    // "enabled":false only appears on the gating reply; real command
-                    // responses omit the key, so default true.
-                    if (!zResponse.optBoolean("enabled", true)) {
-                        noteEnabled(false);
-                        if (cb != null) cb.onError(ERR_NOT_ENABLED);
-                        return;
+                    // Backstop: this lambda runs on the UI thread with NO try/catch above it, so any
+                    // uncaught throwable in a caller's onResult/onError (a render NPE, a bad-JSON deref)
+                    // would crash the whole app. Contain it — one bad callback must never kill Openly.
+                    try {
+                        // "enabled":false only appears on the gating reply; real command
+                        // responses omit the key, so default true.
+                        if (!zResponse.optBoolean("enabled", true)) {
+                            noteEnabled(false);
+                            if (cb != null) cb.onError(ERR_NOT_ENABLED);
+                            return;
+                        }
+                        // A successful command means the node ran it as an enabled app — if we thought we
+                        // were unpaired (e.g. the register reply got lost), this is the recovery signal.
+                        noteEnabled(true);
+                        if (cb != null) cb.onResult(zResponse);
+                    } catch (Throwable t) {
+                        android.util.Log.e("NodeApi", "callback threw (contained)", t);
                     }
-                    // A successful command means the node ran it as an enabled app — if we thought we
-                    // were unpaired (e.g. the register reply got lost), this is the recovery signal.
-                    noteEnabled(true);
-                    if (cb != null) cb.onResult(zResponse);
                 });
             }
         });

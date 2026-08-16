@@ -23,6 +23,7 @@ import com.google.android.material.tabs.TabLayout;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.minimarex.minimaapi.MinimaAPI;
+import org.minimarex.minimaapi.MinimaAPIMessages;
 
 import com.eurobuddha.comms.NodeApi;
 
@@ -140,7 +141,7 @@ public class MainActivity extends AppCompatActivity {
             comms.setup(null);   // derive comms identity → pins identity.commsId
             scanner.loadKeys(this::requestReload);
         });
-        try { OpenlyService.start(this); } catch (Exception ignored) {}
+        scheduleBackgroundRefresh();
 
         installStatusStrip();
         showVersion();
@@ -294,20 +295,48 @@ public class MainActivity extends AppCompatActivity {
     private long lastSettleScan = 0;
 
     private void onScanned() {
-        if (scanner != null && identity != null) {
-            identityOrphaned = scanner.identityOrphaned(identity.pubkey);
-            updateIdentityBanner();
+        if (gone()) return;
+        // This whole pipeline runs inside a node callback on the UI thread. A RuntimeException in any
+        // step (a render NPE, a bad deref) would otherwise propagate through the Handler and crash the
+        // app every block. Contain the pipeline, and repaint the view even if a step failed.
+        try {
+            if (scanner != null && identity != null) {
+                identityOrphaned = scanner.identityOrphaned(identity.pubkey);
+                updateIdentityBanner();
+            }
+            if (auto != null) auto.process(currentBlock);
+            autoCancelSuperseded();
+            scanPendingSettlements();
+            detectSettlements();
+            detectExternalSettlements();
+            autoSettleAgreed();
+            checkPendingPosts();
+            reconcileArbiterSets();
+        } catch (Throwable t) {
+            android.util.Log.e("Openly", "onScanned pipeline (contained)", t);
         }
-        if (auto != null) auto.process(currentBlock);
-        autoCancelSuperseded();
-        scanPendingSettlements();
-        detectSettlements();
-        detectExternalSettlements();
-        autoSettleAgreed();
-        checkPendingPosts();
-        reconcileArbiterSets();
-        BaseView v = pagerAdapter.viewAt(pager.getCurrentItem());
-        v.refresh();
+        try {
+            BaseView v = pagerAdapter.viewAt(pager.getCurrentItem());
+            if (v != null) v.refresh();
+        } catch (Throwable t) {
+            android.util.Log.e("Openly", "view refresh (contained)", t);
+        }
+    }
+
+    /** True once the Activity is finishing/destroyed — guards late callbacks that would touch dead
+     *  views or show a dialog on a dead window token (WindowManager$BadTokenException). */
+    private boolean gone() { return isFinishing() || isDestroyed(); }
+
+    /** Enqueue the periodic background catch-up (replaces the perpetual dataSync foreground service,
+     *  which Android 14/15 crash-loops after its ~6h/day limit). One bounded scan cycle every ~15 min;
+     *  KEEP so re-opening the app doesn't reset the schedule. */
+    private void scheduleBackgroundRefresh() {
+        try {
+            androidx.work.PeriodicWorkRequest req = new androidx.work.PeriodicWorkRequest.Builder(
+                    OpenlyRefreshWorker.class, 15, java.util.concurrent.TimeUnit.MINUTES).build();
+            androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                    "openly-refresh", androidx.work.ExistingPeriodicWorkPolicy.KEEP, req);
+        } catch (Throwable t) { android.util.Log.w("Openly", "background refresh schedule failed", t); }
     }
 
     // ---- settlement payoff reveal ----
@@ -415,7 +444,7 @@ public class MainActivity extends AppCompatActivity {
         // detectSettlements records it on confirm. Avoids a false terminal row if the co-sign never mines.
         watchSettlement(b, outcome);
         settleShown.add(b.nonce);           // I'm revealing now; suppress the confirm-time re-reveal
-        new SettleResult(this, b, outcome, false).show();
+        if (!gone()) new SettleResult(this, b, outcome, false).show();
     }
 
     /** Persist a terminal result so it appears in HISTORY (rich: path + exact money in/out).
@@ -588,7 +617,7 @@ public class MainActivity extends AppCompatActivity {
             Integer o = settleOutcome.get(nonce);
             if (b != null && o != null) {
                 recordSettlement(b, o, SettleResult.SELF);          // idempotent (REPLACE) — records on confirm
-                if (settleShown.add(nonce)) new SettleResult(this, b, o, true).show();   // reveal once
+                if (!gone() && settleShown.add(nonce)) new SettleResult(this, b, o, true).show();   // reveal once
             }
             it.remove();
             settleOutcome.remove(nonce);
@@ -701,7 +730,7 @@ public class MainActivity extends AppCompatActivity {
     private void finishClassify(String nonce, Bet b, int outcome, String path) {
         if (!db.hasHistory(nonce) && settleShown.add(nonce)) {
             recordSettlement(b, outcome, path);
-            new SettleResult(this, b, outcome, true, path).show();
+            if (!gone()) new SettleResult(this, b, outcome, true, path).show();
         }
         clearClassify(nonce);
         refreshCurrent();
@@ -926,7 +955,15 @@ public class MainActivity extends AppCompatActivity {
         notifyReceiver = new BroadcastReceiver() {
             @Override public void onReceive(Context c, Intent intent) {
                 if (!MinimaAPI.checkMinimaID(c, intent)) return;
-                requestReload();
+                // Scan on NEWBLOCK only. NEWBALANCE can fire several times per block; reloading on each
+                // ran the (now-bounded) board scan repeatedly per block — wasteful and, when the board
+                // read was unbounded, a repeated shot at the 256 KB IPC-parcel crash. One scan/block is
+                // the family rule (see BetScanner javadoc). Reuses utxo's MainActivity NOTIFY pattern.
+                String data = intent.getStringExtra(MinimaAPIMessages.MINIMA_API_NOTIFY_DATA);
+                if (data == null) { requestReload(); return; }   // no event payload → fall back to reload
+                try {
+                    if ("NEWBLOCK".equals(new JSONObject(data).optString("event", ""))) requestReload();
+                } catch (Exception ignored) {}
             }
         };
         IntentFilter f = new IntentFilter(NODE_PKG + ".NOTIFY");
@@ -952,7 +989,10 @@ public class MainActivity extends AppCompatActivity {
 
     @Override protected void onDestroy() {
         super.onDestroy();
-        if (notifyReceiver != null) unregisterReceiver(notifyReceiver);
+        // Drop every queued/delayed callback (reloadTask, onScanned/toast posts) so a scan that lands
+        // right as we leave can't run onScanned → dialog.show() on a dead window (BadTokenException).
+        ui.removeCallbacksAndMessages(null);
+        if (notifyReceiver != null) try { unregisterReceiver(notifyReceiver); } catch (Exception ignored) {}
         if (node != null) node.onDestroy();
         Sfx.release();
     }

@@ -30,7 +30,10 @@ public class BetScanner {
     private final NodeApi node;
     private final Listener listener;
 
-    private final Set<String> myKeys = new HashSet<>();
+    // Thread-safe: written on the UI thread (loadKeys callback) but READ on the parseIo thread
+    // (Bet.from → owns → contains) during a scan. A plain HashSet raced across those two threads
+    // (add during contains → table-resize misread / ownership flicker). newKeySet() removes the race.
+    private final Set<String> myKeys = java.util.concurrent.ConcurrentHashMap.newKeySet();
     public final List<Bet> open = new ArrayList<>();
     public final List<Bet> matched = new ArrayList<>();
     // Nonces I have just accepted/filled locally. The fill spends the phase-0 coin, but the chain
@@ -113,7 +116,13 @@ public class BetScanner {
         if (scanning) return;
         scanning = true;
         this.tipBlock = tip;
-        node.cmd("coins address:" + OpenlyContract.ADDR, new NodeApi.Cb() {
+        // BOUNDED read of the SHARED public board (every user's open+matched coins live here). An
+        // unbounded `coins address:` scans the whole unpruned chain — on a busy board the reply crosses
+        // the node's ~256 KB Broadcast-Intent parcel limit → TransactionTooLargeException → uncatchable
+        // app kill. depth is a block window: every LIVE bet's coin is re-locked within the 1024-block
+        // visibility horizon (AutoProcessor keeps it < REFRESH_AGE 600), so depth:1024 covers them all;
+        // older un-refreshed coins are already at/near timeout. Matches the family bounded-query rule.
+        node.cmd("coins address:" + OpenlyContract.ADDR + " order:desc depth:1024", new NodeApi.Cb() {
             public void onResult(JSONObject r) {
                 final JSONArray arr = r.optJSONArray("response");
                 parseIo.execute(() -> {                       // parse off the UI thread
