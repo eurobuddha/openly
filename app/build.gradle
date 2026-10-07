@@ -9,7 +9,7 @@ plugins {
 // would then have been a downgrade, which is how Terminal IDE stranded its own numbering.
 // Realigned while the convention value is still an increase. Bump RELEASE by hand each release;
 // the code follows automatically, so the two can no longer disagree.
-def RELEASE = "0.2.7"
+def RELEASE = "0.2.10"
 // minor*100 + patch, read straight off RELEASE so the two can never drift apart.
 def releaseCode = { ->
     def p = RELEASE.tokenize('.')
@@ -73,6 +73,9 @@ android {
 }
 
 dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:5.12.0'
+    testImplementation 'org.json:json:20240303'
     implementation libs.appcompat
     implementation libs.material
     implementation libs.activity
@@ -88,8 +91,9 @@ dependencies {
     implementation files('libs/minimaapi.aar')
 
     // Client-side end-to-end crypto for comms: X25519 sealed box + Ed25519 (libsodium).
-    // The node has no Maxima over IPC, so all encryption/signing happens in-app; the node
-    // only carries the sealed blob in coin state. Keys derive from the Minima seed.
+    // Encryption/signing always happens in-app; the sealed blob then rides EITHER an on-chain
+    // coin's state (fallback) OR Maxima (`maxima action:send`, fast path) — same blob, two
+    // transports. Keys derive from the Minima seed.
     implementation 'com.goterl:lazysodium-android:5.2.0@aar'  // 16 KB-aligned libsodium.so (all ABIs)
     implementation 'net.java.dev.jna:jna:5.14.0@aar'          // 16 KB-aligned libjnidispatch.so
 }

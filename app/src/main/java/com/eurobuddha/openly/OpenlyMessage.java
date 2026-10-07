@@ -22,6 +22,7 @@ public class OpenlyMessage {
     public static final String DISPUTE_WITHDRAW = "DISPUTE_WITHDRAW";  // caller retracts an arbiter summons
     public static final String ARB_RESULT     = "ARB_RESULT";
     public static final String CHAT           = "CHAT";          // per-bet chat; text in `statement`
+    public static final String MX_ACK         = "MX_ACK";        // Maxima app-level receipt; `statement` = acked randomid
 
     public String type;
     public String ref;         // bet nonce
@@ -36,6 +37,7 @@ public class OpenlyMessage {
     public String winnerAmt, loserAmt, txnsha3, hexchunk;
     public int seq = 0, total = 1;
     public String txpowid, reason, statement;
+    public String maxaddr;     // sender's current Maxima (MxG…) contact address, so the peer can reply over Maxima
 
     public String raw;         // the full JSON as received/sent (for chunk reassembly / audit)
 
@@ -54,6 +56,7 @@ public class OpenlyMessage {
             if (txpowid != null) j.put("txpowid", txpowid);
             if (reason != null) j.put("reason", reason);
             if (statement != null) j.put("statement", statement);
+            if (maxaddr != null) j.put("maxaddr", maxaddr);
             return j.toString().getBytes(StandardCharsets.UTF_8);
         } catch (Exception e) { return new byte[0]; }
     }
@@ -80,6 +83,7 @@ public class OpenlyMessage {
             m.txpowid = j.optString("txpowid", null);
             m.reason = j.optString("reason", null);
             m.statement = j.optString("statement", null);
+            m.maxaddr = j.optString("maxaddr", null);
             m.raw = s;
             return m;
         } catch (Exception e) { return null; }

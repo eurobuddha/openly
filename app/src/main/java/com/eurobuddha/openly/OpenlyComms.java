@@ -15,9 +15,14 @@ import com.eurobuddha.comms.CommsScanner;
 import com.eurobuddha.comms.CommsTransport;
 import com.eurobuddha.comms.Hex;
 import com.eurobuddha.comms.LocalEcCryptoProvider;
+import com.eurobuddha.comms.MaximaTransport;
 import com.eurobuddha.comms.NodeApi;
 import com.eurobuddha.comms.Opened;
 import com.eurobuddha.comms.Sodium;
+
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import com.goterl.lazysodium.LazySodium;
 
@@ -52,12 +57,29 @@ public class OpenlyComms {
     private CommsScanner scanner;
     private boolean ready = false;
 
+    // --- Maxima (fast off-chain path) ---
+    private final MaximaTransport maxima;
+    /** Peer commsId (lowercase) → their last-known Maxima MxG address, learned from any inbound msg. */
+    private final Map<String, String> peerMx = new ConcurrentHashMap<>();
+    /** randomids sent over Maxima awaiting the peer app's MX_ACK; if none arrives, an on-chain copy is posted. */
+    private final Set<String> pendingAck = ConcurrentHashMap.newKeySet();
+
+    private static final CommsTransport.SendCb NOOP_SEND = new CommsTransport.SendCb() {
+        public void onSent(String t) {}
+        public void onFailed(String e) {}
+    };
+
     public OpenlyComms(MainActivity act, NodeApi node, OpenlyDb db, Sink sink) {
         this.act = act;
         this.node = node;
         this.db = db;
         this.sink = sink;
+        this.maxima = new MaximaTransport(node);
     }
+
+    /** Refresh Maxima availability + my address. Call on setup and each block (two cheap node calls). */
+    public void refreshMaxima() { if (maxima != null) maxima.refresh(); }
+    public boolean maximaAvailable() { return maxima != null && maxima.available(); }
 
     public boolean ready() { return ready; }
     public String myId() { return identity != null ? identity.publicId() : ""; }
@@ -95,6 +117,7 @@ public class OpenlyComms {
                             (ok, newCount) -> {},
                             true);
                     ready = true;
+                    refreshMaxima();                 // prime Maxima availability + my MxG address
                     if (done != null) done.run();
                 });
             } catch (Throwable e) {
@@ -136,20 +159,30 @@ public class OpenlyComms {
         scan(block);
     }
 
-    /** Router callback from the scanner: seal opened + signature verified. Dedup + hand to sink. */
+    /** Router callback from the on-chain scanner: seal opened + signature verified. Dedup + hand to sink. */
     private boolean route(String coinid, Opened opened, JSONObject coin) {
         if (opened == null || !opened.valid) return false;
         OpenlyMessage m = OpenlyMessage.fromWire(opened.plaintext, opened.fromPublicId);
         if (m == null || m.randomid.isEmpty() || m.ref.isEmpty()) return false;
-        // Case-insensitive: on-chain comms ids are UPPERCASE hex, runtime Hex.to() is lowercase.
-        boolean forMe = m.to.equalsIgnoreCase(myId());
-        Log.d(TAG, "route: type=" + m.type + " ref=" + (m.ref.length() > 12 ? m.ref.substring(0, 12) : m.ref)
-                + " forMe=" + forMe + " from=" + (m.from == null ? "?" : (m.from.length() > 12 ? m.from.substring(0, 12) : m.from)));
-        if (!forMe) return false;                          // not addressed to me
         m.coinid = m.coinid == null || m.coinid.isEmpty() ? coinid : m.coinid;
+        return dispatch(m, coin);
+    }
+
+    /** Shared handling for an authenticated inbound message from EITHER transport (on-chain or Maxima):
+     *  learn the peer's Maxima address, swallow ACKs, else hand to the sink (which does party-auth + dedup). */
+    private boolean dispatch(OpenlyMessage m, JSONObject coin) {
+        // Case-insensitive: on-chain comms ids are UPPERCASE hex, runtime Hex.to() is lowercase.
+        boolean forMe = m.to != null && m.to.equalsIgnoreCase(myId());
+        Log.d(TAG, "dispatch: type=" + m.type + " forMe=" + forMe
+                + " from=" + (m.from == null ? "?" : (m.from.length() > 12 ? m.from.substring(0, 12) : m.from)));
+        if (!forMe) return false;                          // not addressed to me
+        // Learn/refresh the peer's Maxima address from any authenticated inbound → future sends go Maxima-first.
+        if (m.from != null && m.maxaddr != null && !m.maxaddr.isEmpty()) peerMx.put(m.from.toLowerCase(), m.maxaddr);
+        // An MX_ACK means the peer's app received a Maxima message → cancel our pending on-chain fallback.
+        // Never sinks/stores; the acked randomid unpredictable (sealed), so a forged ACK can't suppress anything.
+        if (OpenlyMessage.MX_ACK.equals(m.type)) { if (m.statement != null) pendingAck.remove(m.statement); return false; }
         // sink does party-authentication (needs on-chain bet state) + storage + dispatch
         final boolean[] fresh = {false};
-        // sink runs on the caller (scanner) thread; marshal DB + UI safely
         try { fresh[0] = sink.onMessage(m, coin); } catch (Exception ignored) {}
         return fresh[0];
     }
@@ -159,15 +192,94 @@ public class OpenlyComms {
         sendTo(OpenlyContract.MAIL_ADDR, toPublicId, m, cb);
     }
 
-    /** Seal + send to a recipient publicId at a SPECIFIC address — used for per-bet settlement blobs
-     *  (posted to {@link OpenlyContract#settleAddr}) so the receiver reads a private, un-bloated address. */
+    /** Seal + send to a recipient publicId. Maxima-first when it's connected AND we know the peer's MxG
+     *  address; otherwise (or on Maxima failure) the sealed blob is posted on-chain at {@code address}
+     *  (per-bet {@link OpenlyContract#settleAddr} or the shared MAIL_ADDR) exactly as before. The blob is
+     *  IDENTICAL on both transports, so encryption/auth/dedup (randomid) are unchanged. */
     public void sendTo(String address, String toPublicId, OpenlyMessage m, CommsTransport.SendCb cb) {
         if (crypto == null) { cb.onFailed("comms not ready"); return; }
         m.from = myId();
-        String blob = crypto.seal(toPublicId, m.toWire());
+        if (maxima != null) m.maxaddr = maxima.myAddress();   // let the peer learn where to reach me over Maxima
+        final String blob = crypto.seal(toPublicId, m.toWire());
         if (blob == null) { cb.onFailed("seal failed"); return; }
-        CommsTransport.postBlob(node, address, CommsTransport.MESSAGE_AMOUNT,
+        final String rid = m.randomid;
+        final Runnable onChain = () -> CommsTransport.postBlob(node, address, CommsTransport.MESSAGE_AMOUNT,
                 CommsTransport.NATIVE, blob, null, cb);
+        final String peer = toPublicId == null ? null : peerMx.get(toPublicId.toLowerCase());
+        if (maxima != null && maxima.available() && peer != null && !peer.isEmpty()) {
+            maxima.send(peer, "0x" + blob, new MaximaTransport.DeliverCb() {
+                public void onResult(boolean delivered, String msgid) {
+                    if (!delivered) { onChain.run(); return; }   // peer node offline → on-chain guarantees it lands
+                    cb.onSent(msgid == null ? "" : msgid);       // node accepted → confirm to the caller now
+                    armAckFallback(rid, address, blob);          // silent on-chain copy if the peer APP never acks
+                }
+                public void onError(String e) { onChain.run(); }
+            });
+        } else {
+            onChain.run();                                       // Maxima absent / peer unknown → on-chain, as today
+        }
+    }
+
+    /** After a Maxima delivered:true, wait ~8s for the peer app's MX_ACK; if none, post the same sealed
+     *  blob on-chain (durability for the "peer node online but Openly app closed" gap). Same randomid, so
+     *  the peer de-dupes if it later sees both. */
+    private void armAckFallback(final String randomid, final String address, final String blob) {
+        if (randomid == null || randomid.isEmpty()) return;
+        pendingAck.add(randomid);
+        ui.postDelayed(() -> {
+            if (pendingAck.remove(randomid)) {   // still pending → no ack arrived
+                Log.d(TAG, "maxima ack timeout → on-chain fallback for " + randomid);
+                CommsTransport.postBlob(node, address, CommsTransport.MESSAGE_AMOUNT,
+                        CommsTransport.NATIVE, blob, null, NOOP_SEND);
+            }
+        }, 8000);
+    }
+
+    /**
+     * Handle an inbound MAXIMA NOTIFY event (application:openly). Opens the SAME sealed blob, routes it
+     * through the shared {@link #dispatch} path (dedup + sink), and — for a real message addressed to me
+     * — sends an MX_ACK back over Maxima so the sender can skip its on-chain fallback.
+     */
+    public void handleMaximaEvent(final JSONObject data) {
+        if (crypto == null || data == null) return;
+        if (!"openly".equals(data.optString("application", ""))) return;
+        final String blob = data.optString("data", "");
+        if (blob.isEmpty()) return;
+        io.execute(() -> {
+            final Opened o;
+            try { o = crypto.open(blob); } catch (Throwable t) { return; }   // not for me / malformed
+            if (o == null || !o.valid) return;
+            final OpenlyMessage m = OpenlyMessage.fromWire(o.plaintext, o.fromPublicId);
+            if (m == null || m.randomid == null || m.randomid.isEmpty() || m.ref == null || m.ref.isEmpty()) return;
+            ui.post(() -> {
+                boolean isAck = OpenlyMessage.MX_ACK.equals(m.type);
+                dispatch(m, null);
+                if (!isAck && m.to != null && m.to.equalsIgnoreCase(myId()) && m.from != null && !m.from.isEmpty())
+                    sendAck(m);
+            });
+        });
+    }
+
+    /** Best-effort Maxima receipt so the sender needn't fall back on-chain. Sealed to the sender's commsId. */
+    private void sendAck(OpenlyMessage orig) {
+        if (maxima == null || !maxima.available()) return;
+        String peer = peerMx.get(orig.from.toLowerCase());
+        if (peer == null || peer.isEmpty()) return;
+        OpenlyMessage ack = new OpenlyMessage();
+        ack.type = OpenlyMessage.MX_ACK;
+        ack.ref = orig.ref;
+        ack.to = orig.from;
+        ack.from = myId();
+        ack.maxaddr = maxima.myAddress();
+        ack.statement = orig.randomid;                       // the randomid we are acknowledging
+        ack.date = System.currentTimeMillis();
+        ack.randomid = "0xACK" + (orig.randomid.startsWith("0x") ? orig.randomid.substring(2) : orig.randomid);
+        String blob = crypto.seal(orig.from, ack.toWire());
+        if (blob == null) return;
+        maxima.send(peer, "0x" + blob, new MaximaTransport.DeliverCb() {
+            public void onResult(boolean d, String id) {}
+            public void onError(String e) {}
+        });
     }
 
     /**

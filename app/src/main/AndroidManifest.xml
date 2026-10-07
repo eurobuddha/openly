@@ -9,7 +9,7 @@
     <!-- Android 11+ package visibility: needed to launch the node app and to deliver
          our targeted (setPackage) IPC broadcasts to it -->
     <queries>
-        <package android:name="org.minimarex.minimacore" />
+        <package android:name="com.eurobuddha.minimacore" />
     </queries>
 
     <!-- allowBackup=false is a FUND-SAFETY setting here, not a preference. With the scaffold default

@@ -22,8 +22,8 @@ import com.google.android.material.tabs.TabLayout;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
-import org.minimarex.minimaapi.MinimaAPI;
-import org.minimarex.minimaapi.MinimaAPIMessages;
+import com.eurobuddha.minimaapi.MinimaAPI;
+import com.eurobuddha.minimaapi.MinimaAPIMessages;
 
 import com.eurobuddha.comms.NodeApi;
 
@@ -38,7 +38,7 @@ import com.eurobuddha.comms.NodeApi;
  */
 public class MainActivity extends AppCompatActivity {
 
-    public static final String NODE_PKG = "org.minimarex.minimacore";
+    public static final String NODE_PKG = "com.eurobuddha.minimacore";
 
     /** The Activity currently in the foreground — the AutoProcessor/Service handoff reads this. */
     public static volatile boolean FOREGROUND = false;
@@ -910,7 +910,7 @@ public class MainActivity extends AppCompatActivity {
                         scanner.scanDisputes(arbAddrs);
                     }
                 }
-                if (comms != null && comms.ready()) comms.scan(currentBlock);
+                if (comms != null && comms.ready()) { comms.scan(currentBlock); comms.refreshMaxima(); }
                 // NOTE: no periodic `coins sendable:true` here — on a large wallet that reply blows the
                 // 256 KB IPC limit and destabilises the app. Spent funding coins self-expire from reuse.
                 // Only the visible page repaints on a block; the others refresh when selected
@@ -947,6 +947,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void openNodeApp() {
         Intent i = getPackageManager().getLaunchIntentForPackage(NODE_PKG);
+        if (i == null) i = getPackageManager().getLaunchIntentForPackage("com.eurobuddha.minimablock");
+        if (i == null) i = getPackageManager().getLaunchIntentForPackage("com.eurobuddha.pandamonium");
         if (i != null) startActivity(i);
     }
 
@@ -962,7 +964,11 @@ public class MainActivity extends AppCompatActivity {
                 String data = intent.getStringExtra(MinimaAPIMessages.MINIMA_API_NOTIFY_DATA);
                 if (data == null) { requestReload(); return; }   // no event payload → fall back to reload
                 try {
-                    if ("NEWBLOCK".equals(new JSONObject(data).optString("event", ""))) requestReload();
+                    JSONObject nd = new JSONObject(data);
+                    String event = nd.optString("event", "");
+                    if ("NEWBLOCK".equals(event)) requestReload();
+                    // Inbound Maxima message (fast off-chain transport) → open + route via OpenlyComms.
+                    else if ("MAXIMA".equals(event) && comms != null) comms.handleMaximaEvent(nd.optJSONObject("data"));
                 } catch (Exception ignored) {}
             }
         };
